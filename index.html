@@ -386,9 +386,11 @@
   "use strict";
 
   /* ---------- Config ---------- */
-  // Same origin when served by the API itself (localhost:8000); otherwise the local API. Override with ?api=
-  const API_URL = (new URLSearchParams(location.search).get("api") ||
-    (location.port === "8000" ? location.origin : "http://localhost:8000")).replace(/\/$/, "");
+  // Served by the API itself (Render, localhost:8000, ...) -> use the same origin.
+  // Opened from a static server or a file -> fall back to the local API. Override with ?api=
+  const LOCAL_API = "http://localhost:8000";
+  const explicitApi = new URLSearchParams(location.search).get("api");
+  let API_URL = (explicitApi || (/^https?:$/.test(location.protocol) ? location.origin : LOCAL_API)).replace(/\/$/, "");
   const GUIDE = 0.7;                      // fraction of the camera square inside the frame (matches .marks inset: 15%)
   const MAX_BYTES = 10 * 1024 * 1024;
   const MODES = ["camera", "upload", "draw"];
@@ -1002,7 +1004,9 @@
       ms = Math.round(performance.now() - t0);
     } catch (err) {
       if (id !== state.seq || err.name === "AbortError") return;
-      readStatus(err.api ? err.message : `Can't reach the API at ${API_URL}. Start it with “uvicorn main:app”, then try again.`, "err");
+      readStatus(err.api ? err.message : (API_URL === LOCAL_API
+        ? `Can't reach the API at ${API_URL}. Start it with “uvicorn main:app”, then try again.`
+        : `The API at ${new URL(API_URL).host} isn't responding. If it was idle, give it a few seconds to wake up, then try again.`), "err");
       setApi(false);
       return;
     }
@@ -1024,12 +1028,18 @@
     el.api.dataset.s = ok ? "ok" : "off";
     el.apiText.textContent = (ok ? "Connected to " : "No API at ") + new URL(API_URL).host;
   }
+  async function ping(base) {
+    const c = new AbortController(), t = setTimeout(() => c.abort(), 15000); // hosted free tiers can take a while to wake
+    try { return (await fetch(`${base}/ready`, { signal: c.signal })).ok; }
+    catch (_) { return false; }
+    finally { clearTimeout(t); }
+  }
   async function checkApi() {
     el.api.dataset.s = "wait"; el.apiText.textContent = "Checking API";
-    const c = new AbortController(), t = setTimeout(() => c.abort(), 2500);
-    try { const r = await fetch(`${API_URL}/ready`, { signal: c.signal }); setApi(r.ok); }
-    catch (_) { setApi(false); }
-    finally { clearTimeout(t); }
+    let ok = await ping(API_URL);
+    if (!ok && !explicitApi && API_URL !== LOCAL_API && await ping(LOCAL_API)) { API_URL = LOCAL_API; ok = true; }
+    el.api.title = API_URL;
+    setApi(ok);
   }
   el.api.addEventListener("click", checkApi);
   el.api.title = API_URL;
