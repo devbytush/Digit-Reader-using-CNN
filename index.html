@@ -1,0 +1,1061 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1C2A26">
+<title>Digit reader</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+  /* Palette: spruce desk, sage engineering-pad paper, ballpoint-blue ink, one red for the stamp. */
+  :root {
+    --desk: #1C2A26;
+    --paper: #E3EBD6;
+    --paper-2: #D3DEC2;
+    --rule-soft: #D0DCC2;
+    --rule: #B8C9A6;
+    --rule-2: #9DB38B;
+    --ink: #213AA0;
+    --ink-deep: #16257A;
+    --muted: #55634F;
+    --stamp: #D5391F;
+    --stamp-deep: #A82A15;
+    --amber: #7A5200;
+    --on-desk: #DCE6CF;
+    --on-desk-muted: #8FA597;
+    --display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
+    --text: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --ease: cubic-bezier(.3, .8, .2, 1);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; color: var(--on-desk); font: 400 15px/1.5 var(--text);
+    background-color: var(--desk);
+    background-image:
+      linear-gradient(#ffffff09 1px, transparent 1px),
+      linear-gradient(90deg, #ffffff09 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  :focus-visible { outline: 2px solid var(--stamp); outline-offset: 3px; }
+  button { font: inherit; color: inherit; }
+
+  .desk { max-width: 1080px; margin: 0 auto; padding: clamp(16px, 3.2vw, 36px); }
+
+  /* Header */
+  .top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+  h1 { margin: 0; font: 800 clamp(2.4rem, 6vw, 3.4rem)/.9 var(--display); letter-spacing: .01em; }
+  .top p { margin: 6px 0 0; color: var(--on-desk-muted); }
+  .api { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #ffffff26;
+    border-radius: 4px; background: transparent; cursor: pointer; font-size: 13px; color: var(--on-desk-muted); }
+  .api:hover { border-color: #ffffff55; color: var(--on-desk); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #7d8c83; }
+  .api[data-s="ok"] .dot { background: #8BD17C; }
+  .api[data-s="off"] .dot { background: #F0836F; }
+  .api[data-s="wait"] .dot { animation: blink 1s infinite alternate; }
+  @keyframes blink { to { opacity: .25; } }
+
+  /* Layout */
+  .board { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  @media (max-width: 899px) { .board { grid-template-columns: minmax(0, 1fr); } }
+
+  .sheet {
+    position: relative; padding: 18px; border-radius: 6px; color: var(--ink-deep); background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--rule) 1px, transparent 1px), linear-gradient(90deg, var(--rule) 1px, transparent 1px),
+      linear-gradient(var(--rule-soft) 1px, transparent 1px), linear-gradient(90deg, var(--rule-soft) 1px, transparent 1px);
+    background-size: 140px 140px, 140px 140px, 28px 28px, 28px 28px;
+  }
+  @media (max-width: 480px) { .sheet { padding: 14px; } }
+
+  /* Tabs */
+  .tabs { --i: 0; position: relative; display: grid; grid-template-columns: repeat(3, 1fr); padding: 3px;
+    border: 1px solid var(--rule-2); border-radius: 5px; background: var(--paper-2); }
+  .tabs::before { content: ""; position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 3);
+    border-radius: 3px; background: var(--ink); transform: translateX(calc(var(--i) * 100%)); transition: transform .3s var(--ease); }
+  .tab { position: relative; height: 40px; border: 0; border-radius: 3px; background: transparent; cursor: pointer;
+    font-weight: 600; font-stretch: 108%; color: var(--muted); transition: color .2s; }
+  .tab[aria-selected="true"] { color: var(--paper); }
+
+  /* Input surface */
+  .surface { position: relative; aspect-ratio: 1; margin-top: 14px; overflow: hidden; border: 1.5px solid var(--ink);
+    border-radius: 4px; background: var(--paper-2); }
+  .surface.dragging { outline: 3px solid var(--stamp); outline-offset: 3px; }
+  .layer { position: absolute; inset: 0; display: none; }
+  .surface[data-view="idle"] .v-idle { display: block; }
+  .surface[data-view="live"] .v-live { display: block; }
+  .surface[data-view="specimen"] .v-specimen { display: block; }
+  .surface[data-view="drop"] .v-drop { display: grid; }
+  .surface[data-view="draw"] .v-draw { display: block; }
+
+  .marks { --m: 22px; --w: 2px; --c: var(--ink); position: absolute; inset: 15%;
+    background:
+      linear-gradient(var(--c), var(--c)) top left / var(--m) var(--w) no-repeat,
+      linear-gradient(var(--c), var(--c)) top left / var(--w) var(--m) no-repeat,
+      linear-gradient(var(--c), var(--c)) top right / var(--m) var(--w) no-repeat,
+      linear-gradient(var(--c), var(--c)) top right / var(--w) var(--m) no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom left / var(--m) var(--w) no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom left / var(--w) var(--m) no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom right / var(--m) var(--w) no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom right / var(--w) var(--m) no-repeat; }
+  .marks.light { --c: var(--paper); box-shadow: 0 0 0 100vmax #0e16137d; }
+  .marks.faint { --c: var(--rule-2); pointer-events: none; }
+
+  .idle-copy { position: absolute; inset: 15%; display: grid; place-content: center; gap: 6px; padding: 0 9%; text-align: center; }
+  .idle-copy strong { font-size: clamp(16px, 2.6vw, 19px); font-stretch: 108%; }
+  .idle-copy span { color: var(--muted); font-size: 14px; }
+
+  video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
+  #specimen { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+  .v-drop { place-content: center; justify-items: center; gap: 8px; width: 100%; border: 0; cursor: pointer;
+    background: var(--paper-2); color: var(--ink); text-align: center; padding: 0 12%; }
+  .v-drop::before { content: ""; position: absolute; inset: 14px; border: 1.5px dashed var(--rule-2); border-radius: 3px; transition: border-color .2s, background-color .2s; }
+  .v-drop:hover::before, .surface.dragging .v-drop::before { border-color: var(--ink); background: #213AA00f; }
+  .v-drop svg { position: relative; }
+  .v-drop strong { position: relative; font-size: 19px; font-stretch: 108%; }
+  .v-drop span { position: relative; color: var(--muted); font-size: 14px; }
+
+  #pad { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; background: var(--paper-2); }
+  .pad-hint { position: absolute; left: 0; right: 0; bottom: 6%; margin: 0; text-align: center; color: var(--muted);
+    font-size: 14px; pointer-events: none; transition: opacity .25s; }
+  .pad-hint.gone { opacity: 0; }
+
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+  .flash.go { animation: flash .3s ease-out; }
+  @keyframes flash { 0% { opacity: .9; } 100% { opacity: 0; } }
+
+  /* Buttons */
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; height: 46px; padding: 0 18px;
+    border: 1.5px solid var(--ink); border-radius: 4px; background: transparent; color: var(--ink);
+    font-weight: 600; font-stretch: 108%; cursor: pointer; transition: background-color .15s, transform .1s; }
+  .btn:hover:not(:disabled) { background: #213AA014; }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary { background: var(--ink); color: var(--paper); }
+  .btn.primary:hover:not(:disabled) { background: var(--ink-deep); }
+  .btn.grow { flex: 1 1 160px; }
+
+  .status { min-height: 24px; margin: 12px 0 0; font-size: 14px; color: var(--muted); }
+  .status.err { color: var(--stamp-deep); font-weight: 500; }
+  .status.warn { color: var(--amber); font-weight: 500; }
+
+  /* Reading plate: the 28 x 28 grid and the stamp */
+  .plate-wrap { display: grid; grid-template-columns: 10px minmax(0, 1fr); grid-template-rows: 14px auto; gap: 4px; }
+  .ruler { display: grid; }
+  .ruler-x { grid-column: 2; grid-row: 1; grid-template-columns: repeat(28, 1fr); }
+  .ruler-y { grid-column: 1; grid-row: 2; grid-template-rows: repeat(28, 1fr); }
+  .ruler i { position: relative; display: block; }
+  .ruler-x i::before { content: ""; position: absolute; left: 0; bottom: 0; width: 1px; height: 5px; background: var(--rule-2); }
+  .ruler-x i[data-n]::before { height: 9px; background: var(--muted); }
+  .ruler-x i[data-n]::after { content: attr(data-n); position: absolute; left: 4px; top: 0; font-size: 9px; line-height: 1; color: var(--muted); }
+  .ruler-y i::before { content: ""; position: absolute; right: 0; top: 0; height: 1px; width: 5px; background: var(--rule-2); }
+  .ruler-y i[data-n]::before { width: 9px; background: var(--muted); }
+  .ruler i.on::before { background: var(--stamp); }
+
+  .plate { position: relative; grid-column: 2; grid-row: 2; aspect-ratio: 1; container-type: inline-size; overflow: hidden;
+    border: 1.5px solid var(--ink); border-radius: 4px; background: var(--paper-2); -webkit-touch-callout: none; user-select: none; }
+  #grid { display: block; width: 100%; height: 100%; transition: opacity .4s; }
+  .plate.stamped #grid { opacity: .2; }
+  .plate.stamped.peek #grid { opacity: 1; }
+
+  .stamp { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; pointer-events: none;
+    mix-blend-mode: multiply; transform: rotate(-3deg); transition: opacity .28s; }
+  .stamp.show { opacity: 1; }
+  .plate.peek .stamp.show { opacity: .05; }
+  .stamp span { grid-area: 1 / 1; font-family: var(--display); font-weight: 900; color: var(--stamp);
+    font-size: 78vw; font-size: 100cqw; line-height: .8; filter: url(#ink); }
+  @supports (text-box: trim-both cap alphabetic) { .stamp span { text-box: trim-both cap alphabetic; line-height: 1; } }
+  .stamp .ghost { opacity: .26; transform: translate(.014em, .01em); }
+  .stamp .main { opacity: calc(.6 + .4 * var(--strength, 1)); }
+  .stamp.land { animation: land .52s cubic-bezier(.2, .9, .25, 1.08) backwards; }
+  @keyframes land {
+    0% { opacity: 0; transform: rotate(-10deg) scale(1.6); }
+    55% { opacity: 1; transform: rotate(-3deg) scale(.97); }
+    100% { opacity: 1; transform: rotate(-3deg) scale(1); }
+  }
+  .plate-wrap.thump { animation: thump .26s .22s; }
+  @keyframes thump { 0% { transform: none; } 35% { transform: translateY(3px); } 100% { transform: none; } }
+
+  .empty { position: absolute; inset: 0; display: none; place-content: center; gap: 6px; padding: 12%; text-align: center; pointer-events: none; }
+  .plate.is-empty .empty { display: grid; }
+  .empty strong { font-size: 19px; font-stretch: 108%; }
+  .empty span { color: var(--muted); font-size: 14px; }
+  .plate.is-empty #grid { opacity: .55; }
+
+  .readout { position: absolute; left: 8px; bottom: 8px; padding: 3px 8px; border: 1px solid var(--ink); border-radius: 3px;
+    background: var(--paper); font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; }
+
+  /* Title block */
+  .block { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5px; margin-top: 4px; border: 1.5px solid var(--ink); background: var(--ink); }
+  .block > div { padding: 10px 12px; background: var(--paper); min-width: 0; }
+  .k { display: block; font-size: 12px; color: var(--muted); }
+  .v { display: block; margin-top: 2px; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .c-read { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: center; }
+  .c-read .k { grid-column: 1 / -1; }
+  #bDigit { font: 900 52px/.9 var(--display); color: var(--ink); }
+  .c-read .meta { display: grid; justify-items: start; gap: 6px; }
+  #bWord { font-size: 15px; font-weight: 600; }
+  .mini { height: 28px; padding: 0 10px; font-size: 13px; }
+  .c-conf { grid-column: span 2; }
+  .bar { height: 6px; margin-top: 8px; background: var(--paper-2); border: 1px solid var(--rule-2); }
+  .bar i { display: block; height: 100%; width: 0; background: var(--ink); transition: width .6s var(--ease); }
+  .bar.low i { background: var(--stamp); }
+  .runs { display: flex; gap: 12px; flex-wrap: wrap; }
+  .runs span { font-weight: 500; color: var(--muted); }
+  .runs b { color: var(--ink-deep); font-weight: 800; margin-right: 4px; }
+  @media (max-width: 480px) {
+    .block { grid-template-columns: 1fr 1fr; }
+    .c-read { grid-column: 1 / -1; }
+    .c-conf { grid-column: 1 / -1; }
+  }
+
+  /* Earlier readings */
+  .earlier { margin-top: 26px; }
+  .earlier h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--on-desk-muted); }
+  .slips { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 10px; }
+  .slip { flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 14px 7px 7px; border: 1.5px solid transparent;
+    border-radius: 4px; background: var(--paper); color: var(--ink-deep); cursor: pointer; transition: transform .15s; }
+  .slip:hover { transform: translateY(-2px); }
+  .slip[aria-pressed="true"] { border-color: var(--stamp); }
+  .slip canvas { width: 44px; height: 44px; border-radius: 2px; background: var(--paper-2); image-rendering: pixelated; }
+  .slip b { font: 900 30px/1 var(--display); }
+  .slip small { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
+
+  .keys { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 26px; color: var(--on-desk-muted); font-size: 13px; }
+  .keys span { display: inline-flex; align-items: center; gap: 7px; }
+  kbd { min-width: 22px; padding: 1px 6px; border: 1px solid #ffffff3d; border-bottom-width: 2px; border-radius: 3px;
+    font: 600 12px/1.4 var(--text); text-align: center; color: var(--on-desk); }
+  @media (hover: none) { .keys { display: none; } }
+
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <filter id="ink" x="-6%" y="-6%" width="112%" height="112%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="4" result="warp"/>
+    <feDisplacementMap in="SourceGraphic" in2="warp" scale="5" result="shape"/>
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="11" result="grain"/>
+    <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  4 0 0 0 -0.4" result="dropout"/>
+    <feComposite in="shape" in2="dropout" operator="in"/>
+  </filter>
+</svg>
+
+<div class="desk">
+  <header class="top">
+    <div>
+      <h1>Digit reader</h1>
+      <p>Handwritten digit to text</p>
+    </div>
+    <button class="api" id="api" type="button" data-s="wait">
+      <span class="dot"></span><span id="apiText">Checking API</span>
+    </button>
+  </header>
+
+  <main class="board">
+    <!-- Input -->
+    <section class="sheet" aria-label="Input">
+      <div class="tabs" id="tabs" role="tablist" aria-label="Input method">
+        <button class="tab" role="tab" id="tab-camera" data-mode="camera" aria-selected="true">Camera</button>
+        <button class="tab" role="tab" id="tab-upload" data-mode="upload" aria-selected="false" tabindex="-1">Upload</button>
+        <button class="tab" role="tab" id="tab-draw" data-mode="draw" aria-selected="false" tabindex="-1">Draw</button>
+      </div>
+
+      <div class="surface" id="surface" data-view="idle">
+        <div class="layer v-idle">
+          <div class="marks"></div>
+          <div class="idle-copy">
+            <strong>Fit one digit in the frame</strong>
+            <span>Dark pen, plain paper, even light.</span>
+          </div>
+        </div>
+
+        <div class="layer v-live">
+          <video id="video" autoplay playsinline muted></video>
+          <div class="marks light"></div>
+        </div>
+
+        <div class="layer v-specimen"><img id="specimen" alt="The image being read"></div>
+
+        <button class="layer v-drop" id="drop" type="button">
+          <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>
+          <strong>Drop a photo here</strong>
+          <span>Click to browse, or paste an image.</span>
+        </button>
+
+        <div class="layer v-draw" id="padLayer">
+          <canvas id="pad" aria-label="Drawing area. Draw one digit."></canvas>
+          <div class="marks faint"></div>
+          <p class="pad-hint" id="padHint">Write one digit. It reads when you lift the pen.</p>
+        </div>
+
+        <div class="flash" id="flash"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary grow" id="openCam" type="button">Open camera</button>
+        <button class="btn primary grow" id="capture" type="button" hidden>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none"/></svg>
+          Capture
+        </button>
+        <button class="btn" id="flip" type="button" hidden>Flip camera</button>
+        <button class="btn" id="stopCam" type="button" hidden>Cancel</button>
+        <button class="btn" id="retake" type="button" hidden>Retake</button>
+        <button class="btn primary grow" id="browse" type="button" hidden>Choose a photo</button>
+        <button class="btn" id="undo" type="button" hidden>Undo</button>
+        <button class="btn" id="clear" type="button" hidden>Clear</button>
+      </div>
+      <p class="status" id="inputStatus" role="status"></p>
+    </section>
+
+    <!-- Reading -->
+    <section class="sheet" aria-label="Reading">
+      <div class="plate-wrap" id="plateWrap">
+        <div class="ruler ruler-x" id="rulerX" aria-hidden="true"></div>
+        <div class="ruler ruler-y" id="rulerY" aria-hidden="true"></div>
+        <div class="plate is-empty" id="plate">
+          <canvas id="grid" aria-hidden="true"></canvas>
+          <div class="stamp" id="stamp" aria-hidden="true"><span class="ghost" id="stampGhost"></span><span class="main" id="stampMain"></span></div>
+          <div class="empty"><strong>No reading yet</strong><span>Take a photo, drop one in, or draw a digit.</span></div>
+          <div class="readout" id="readout" hidden></div>
+        </div>
+      </div>
+      <p class="status" id="readStatus" role="status"></p>
+
+      <div class="block" id="block">
+        <div class="c-read">
+          <span class="k">Reading</span>
+          <span id="bDigit">–</span>
+          <span class="meta">
+            <span id="bWord">&nbsp;</span>
+            <button class="btn mini" id="copy" type="button" disabled>Copy</button>
+          </span>
+        </div>
+        <div class="c-conf">
+          <span class="k">Confidence</span>
+          <span class="v" id="bConf">–</span>
+          <div class="bar" id="bBar"><i></i></div>
+        </div>
+        <div>
+          <span class="k">Runners-up</span>
+          <span class="v runs" id="bRuns">–</span>
+        </div>
+        <div>
+          <span class="k">Source</span>
+          <span class="v" id="bSource">–</span>
+        </div>
+        <div>
+          <span class="k">Response time</span>
+          <span class="v" id="bMs">–</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <section class="earlier" id="earlier" hidden>
+    <h2>Earlier readings</h2>
+    <div class="slips" id="slips"></div>
+  </section>
+
+  <footer class="keys" aria-label="Keyboard shortcuts">
+    <span><kbd>C</kbd> Camera</span>
+    <span><kbd>U</kbd> Upload</span>
+    <span><kbd>D</kbd> Draw</span>
+    <span><kbd>Space</kbd> Capture</span>
+    <span><kbd>Esc</kbd> Close camera</span>
+    <span><kbd>Ctrl</kbd><kbd>Z</kbd> Undo stroke</span>
+  </footer>
+</div>
+
+<input id="file" type="file" accept="image/*" hidden>
+<div class="sr" id="announce" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ---------- Config ---------- */
+  // Same origin when served by the API itself (localhost:8000); otherwise the local API. Override with ?api=
+  const API_URL = (new URLSearchParams(location.search).get("api") ||
+    (location.port === "8000" ? location.origin : "http://localhost:8000")).replace(/\/$/, "");
+  const GUIDE = 0.7;                      // fraction of the camera square inside the frame (matches .marks inset: 15%)
+  const MAX_BYTES = 10 * 1024 * 1024;
+  const MODES = ["camera", "upload", "draw"];
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+  const $ = (s) => document.querySelector(s);
+
+  const el = {
+    tabs: $("#tabs"), surface: $("#surface"), video: $("#video"), specimen: $("#specimen"), drop: $("#drop"),
+    pad: $("#pad"), padLayer: $("#padLayer"), padHint: $("#padHint"), flash: $("#flash"), file: $("#file"),
+    openCam: $("#openCam"), capture: $("#capture"), flip: $("#flip"), stopCam: $("#stopCam"), retake: $("#retake"),
+    browse: $("#browse"), undo: $("#undo"), clear: $("#clear"),
+    inputStatus: $("#inputStatus"), readStatus: $("#readStatus"), announce: $("#announce"),
+    plateWrap: $("#plateWrap"), plate: $("#plate"), grid: $("#grid"), stamp: $("#stamp"),
+    stampMain: $("#stampMain"), stampGhost: $("#stampGhost"), readout: $("#readout"),
+    rulerX: $("#rulerX"), rulerY: $("#rulerY"),
+    bDigit: $("#bDigit"), bWord: $("#bWord"), copy: $("#copy"), bConf: $("#bConf"), bBar: $("#bBar"),
+    bRuns: $("#bRuns"), bSource: $("#bSource"), bMs: $("#bMs"),
+    earlier: $("#earlier"), slips: $("#slips"), api: $("#api"), apiText: $("#apiText"),
+  };
+
+  const state = {
+    mode: "camera", camera: "idle", hasImage: false, facing: "environment", multiCam: false,
+    current: null, history: [], seq: 0, count: 0,
+  };
+  let stream = null;
+  let controller = null;
+
+  /* ---------- Small helpers ---------- */
+  const show = (node, on) => { node.hidden = !on; };
+  const clamp01 = (n) => Math.min(1, Math.max(0, n));
+  function setStatus(node, message = "", kind = "") { node.textContent = message; node.className = "status" + (kind ? " " + kind : ""); }
+  const inputStatus = (m, k) => setStatus(el.inputStatus, m, k);
+  const readStatus = (m, k) => setStatus(el.readStatus, m, k);
+  const toBlob = (canvas, type) => new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error("Could not encode the image."))), type, 0.92));
+
+  /* ---------- Modes and view ---------- */
+  function viewName() {
+    if (state.mode === "draw") return "draw";
+    if (state.hasImage) return "specimen";
+    if (state.mode === "upload") return "drop";
+    return state.camera === "live" ? "live" : "idle";
+  }
+
+  function render() {
+    const v = viewName();
+    el.surface.dataset.view = v;
+    show(el.openCam, state.mode === "camera" && !state.hasImage && state.camera !== "live");
+    el.openCam.disabled = state.camera === "starting";
+    show(el.capture, v === "live");
+    show(el.flip, v === "live" && state.multiCam);
+    show(el.stopCam, v === "live");
+    show(el.retake, state.mode === "camera" && state.hasImage);
+    show(el.browse, state.mode === "upload");
+    el.browse.textContent = state.hasImage ? "Choose another photo" : "Choose a photo";
+    show(el.undo, state.mode === "draw");
+    show(el.clear, state.mode === "draw");
+    el.undo.disabled = el.clear.disabled = pad.strokes.length === 0;
+  }
+
+  function setMode(mode) {
+    if (state.mode === mode) return;
+    stopCamera();
+    state.mode = mode;
+    state.hasImage = false;
+    inputStatus();
+    el.tabs.style.setProperty("--i", MODES.indexOf(mode));
+    el.tabs.querySelectorAll(".tab").forEach((tab) => {
+      const on = tab.dataset.mode === mode;
+      tab.setAttribute("aria-selected", on);
+      tab.tabIndex = on ? 0 : -1;
+    });
+    render();
+  }
+
+  el.tabs.addEventListener("click", (e) => { const t = e.target.closest(".tab"); if (t) setMode(t.dataset.mode); });
+  el.tabs.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const next = MODES[(MODES.indexOf(state.mode) + (e.key === "ArrowRight" ? 1 : MODES.length - 1)) % MODES.length];
+    setMode(next);
+    $("#tab-" + next).focus();
+  });
+
+  /* ---------- Camera ---------- */
+  function cameraError(err) {
+    switch (err && err.name) {
+      case "NotAllowedError":
+      case "SecurityError":
+        return "Camera access is blocked. Allow it in your browser's site settings, then choose Open camera again.";
+      case "NotFoundError":
+      case "OverconstrainedError":
+        return "No camera found on this device. Upload a photo or draw the digit instead.";
+      case "NotReadableError":
+        return "Another app is using the camera. Close it, then choose Open camera again.";
+      default:
+        return "The camera could not start. Upload a photo or draw the digit instead.";
+    }
+  }
+
+  async function openCamera() {
+    inputStatus();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      inputStatus("The camera only works on HTTPS or localhost. Open this page from localhost, or upload a photo instead.", "err");
+      return;
+    }
+    state.camera = "starting"; state.hasImage = false; render();
+    inputStatus("Waiting for camera permission…");
+    let s;
+    try {
+      s = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: state.facing }, width: { ideal: 1280 }, height: { ideal: 1280 } },
+        audio: false,
+      });
+    } catch (err) {
+      state.camera = "idle"; render();
+      inputStatus(cameraError(err), "err");
+      return;
+    }
+    if (state.mode !== "camera") { s.getTracks().forEach((t) => t.stop()); return; }
+    stream = s;
+    el.video.srcObject = stream;
+    try { await el.video.play(); } catch (_) { /* autoplay attribute handles it */ }
+    state.camera = "live"; inputStatus(); render();
+    navigator.mediaDevices.enumerateDevices()
+      .then((d) => { state.multiCam = d.filter((x) => x.kind === "videoinput").length > 1; render(); })
+      .catch(() => {});
+  }
+
+  function stopCamera() {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    el.video.srcObject = null;
+    state.camera = "idle";
+  }
+
+  function capture() {
+    const v = el.video, vw = v.videoWidth, vh = v.videoHeight;
+    if (!vw || !vh) return;
+    // The viewfinder is the centered square of the feed; the frame is its middle 70%.
+    const side = Math.round(Math.min(vw, vh) * GUIDE);
+    const sx = Math.round((vw - side) / 2), sy = Math.round((vh - side) / 2);
+    const out = Math.min(side, 640);
+    const c = document.createElement("canvas");
+    c.width = c.height = out;
+    c.getContext("2d").drawImage(v, sx, sy, side, side, 0, 0, out, out);
+    el.flash.classList.remove("go"); void el.flash.offsetWidth; el.flash.classList.add("go");
+    stopCamera();
+    showSpecimen(c);
+    read(c, "Camera");
+  }
+
+  function showSpecimen(canvas) {
+    el.specimen.src = canvas.toDataURL("image/jpeg", 0.9);
+    state.hasImage = true;
+    render();
+  }
+
+  el.openCam.addEventListener("click", openCamera);
+  el.retake.addEventListener("click", openCamera);
+  el.capture.addEventListener("click", capture);
+  el.stopCam.addEventListener("click", () => { stopCamera(); render(); });
+  el.flip.addEventListener("click", () => { state.facing = state.facing === "environment" ? "user" : "environment"; stopCamera(); openCamera(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden && state.camera === "live") { stopCamera(); render(); } });
+  addEventListener("pagehide", stopCamera);
+
+  /* ---------- Upload, drop, paste ---------- */
+  async function handleFile(file) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setMode("upload"); inputStatus("That file isn't an image. Choose a JPG or PNG.", "err"); return; }
+    if (file.size > MAX_BYTES) { setMode("upload"); inputStatus("That image is over 10 MB. Choose a smaller one.", "err"); return; }
+    setMode("upload");
+    let bitmap;
+    try {
+      try { bitmap = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+      catch (_) { bitmap = await createImageBitmap(file); }
+    } catch (_) {
+      inputStatus("This browser can't open that image format. Try a JPG or PNG.", "err");
+      return;
+    }
+    const k = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(bitmap.width * k));
+    c.height = Math.max(1, Math.round(bitmap.height * k));
+    const x = c.getContext("2d");
+    x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+    x.drawImage(bitmap, 0, 0, c.width, c.height);
+    if (bitmap.close) bitmap.close();
+    inputStatus();
+    showSpecimen(c);
+    read(c, "Upload");
+  }
+
+  el.drop.addEventListener("click", () => el.file.click());
+  el.browse.addEventListener("click", () => el.file.click());
+  el.file.addEventListener("change", () => { const f = el.file.files[0]; el.file.value = ""; handleFile(f); });
+
+  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+  let dragDepth = 0;
+  addEventListener("dragenter", (e) => { if (hasFiles(e)) { dragDepth++; el.surface.classList.add("dragging"); } });
+  addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  addEventListener("dragleave", (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; el.surface.classList.remove("dragging"); } });
+  addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); dragDepth = 0; el.surface.classList.remove("dragging");
+    handleFile(e.dataTransfer.files[0]);
+  });
+  addEventListener("paste", (e) => {
+    const f = Array.from((e.clipboardData && e.clipboardData.files) || []).find((x) => x.type.startsWith("image/"));
+    if (f) { e.preventDefault(); handleFile(f); }
+  });
+
+  /* ---------- Drawing ---------- */
+  const pad = { ctx: el.pad.getContext("2d"), strokes: [], active: null, size: 0, dpr: 1, timer: 0 };
+  const PEN = 0.07; // pen width as a fraction of the canvas size
+
+  function drawStrokes(ctx, size, strokes, color) {
+    ctx.lineCap = ctx.lineJoin = "round";
+    ctx.strokeStyle = ctx.fillStyle = color;
+    ctx.lineWidth = size * PEN;
+    for (const s of strokes) {
+      if (s.length === 1) { ctx.beginPath(); ctx.arc(s[0].x * size, s[0].y * size, size * PEN / 2, 0, Math.PI * 2); ctx.fill(); continue; }
+      ctx.beginPath();
+      ctx.moveTo(s[0].x * size, s[0].y * size);
+      for (let i = 1; i < s.length - 1; i++) {
+        const mx = (s[i].x + s[i + 1].x) / 2 * size, my = (s[i].y + s[i + 1].y) / 2 * size;
+        ctx.quadraticCurveTo(s[i].x * size, s[i].y * size, mx, my);
+      }
+      const last = s[s.length - 1];
+      ctx.lineTo(last.x * size, last.y * size);
+      ctx.stroke();
+    }
+  }
+
+  function repaintPad() {
+    if (!pad.size) return;
+    const ctx = pad.ctx;
+    ctx.setTransform(pad.dpr, 0, 0, pad.dpr, 0, 0);
+    ctx.clearRect(0, 0, pad.size, pad.size);
+    drawStrokes(ctx, pad.size, pad.strokes, "#213AA0");
+  }
+
+  function sizePad() {
+    const w = Math.round(el.pad.getBoundingClientRect().width);
+    if (!w) return;
+    pad.dpr = Math.min(2, devicePixelRatio || 1);
+    pad.size = w;
+    el.pad.width = el.pad.height = Math.round(w * pad.dpr);
+    repaintPad();
+  }
+  new ResizeObserver(sizePad).observe(el.padLayer);
+
+  function padPoint(e) {
+    const r = el.pad.getBoundingClientRect();
+    return { x: clamp01((e.clientX - r.left) / r.width), y: clamp01((e.clientY - r.top) / r.height) };
+  }
+
+  el.pad.addEventListener("pointerdown", (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    el.pad.setPointerCapture(e.pointerId);
+    clearTimeout(pad.timer);
+    pad.active = [padPoint(e)];
+    pad.strokes.push(pad.active);
+    el.padHint.classList.add("gone");
+    repaintPad(); render();
+  });
+  el.pad.addEventListener("pointermove", (e) => {
+    if (!pad.active) return;
+    pad.active.push(padPoint(e));
+    repaintPad();
+  });
+  const endStroke = () => {
+    if (!pad.active) return;
+    pad.active = null;
+    scheduleDrawingRead();
+  };
+  el.pad.addEventListener("pointerup", endStroke);
+  el.pad.addEventListener("pointercancel", endStroke);
+
+  function scheduleDrawingRead() {
+    clearTimeout(pad.timer);
+    if (!pad.strokes.length) return;
+    pad.timer = setTimeout(() => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 280;
+      const x = c.getContext("2d");
+      x.fillStyle = "#fff"; x.fillRect(0, 0, 280, 280);
+      drawStrokes(x, 280, pad.strokes, "#000");
+      read(c, "Drawing");
+    }, 520);
+  }
+
+  function undoStroke() {
+    if (!pad.strokes.length) return;
+    pad.strokes.pop();
+    repaintPad();
+    el.padHint.classList.toggle("gone", pad.strokes.length > 0);
+    render();
+    scheduleDrawingRead();
+  }
+  function clearPad() {
+    clearTimeout(pad.timer);
+    pad.strokes = []; pad.active = null;
+    repaintPad();
+    el.padHint.classList.remove("gone");
+    render();
+  }
+  el.undo.addEventListener("click", undoStroke);
+  el.clear.addEventListener("click", clearPad);
+
+  /* ---------- Local 28 x 28 preview (mirrors the API's preprocessing) ---------- */
+  function otsu(gray) {
+    const h = new Float64Array(256);
+    for (let i = 0; i < gray.length; i++) h[gray[i]]++;
+    const n = gray.length;
+    let sum = 0; for (let t = 0; t < 256; t++) sum += t * h[t];
+    let wB = 0, sB = 0, best = 0, thr = 0;
+    for (let t = 0; t < 256; t++) {
+      wB += h[t]; if (!wB) continue;
+      const wF = n - wB; if (!wF) break;
+      sB += t * h[t];
+      const mB = sB / wB, mF = (sum - sB) / wF;
+      const v = wB * wF * (mB - mF) * (mB - mF);
+      if (v > best) { best = v; thr = t; }
+    }
+    return thr;
+  }
+
+  function cellsFrom(src) {
+    const k = Math.min(1, 256 / Math.max(src.width, src.height));
+    const w = Math.max(1, Math.round(src.width * k)), h = Math.max(1, Math.round(src.height * k));
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const x = c.getContext("2d", { willReadFrequently: true });
+    x.fillStyle = "#fff"; x.fillRect(0, 0, w, h); x.drawImage(src, 0, 0, w, h);
+    const px = x.getImageData(0, 0, w, h).data;
+    const gray = new Uint8ClampedArray(w * h);
+    for (let i = 0, j = 0; i < gray.length; i++, j += 4) gray[i] = 0.299 * px[j] + 0.587 * px[j + 1] + 0.114 * px[j + 2];
+
+    const border = [];
+    for (let i = 0; i < w; i++) border.push(gray[i], gray[(h - 1) * w + i]);
+    for (let i = 0; i < h; i++) border.push(gray[i * w], gray[i * w + w - 1]);
+    border.sort((a, b) => a - b);
+    if (border[border.length >> 1] >= 127) for (let i = 0; i < gray.length; i++) gray[i] = 255 - gray[i];
+
+    const thr = otsu(gray);
+    const colInk = new Uint32Array(w);
+    for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) if (gray[yy * w + xx] > thr) colInk[xx]++;
+
+    let best = null, start = -1;
+    for (let xx = 0; xx <= w; xx++) {
+      const on = xx < w && colInk[xx] > 0;
+      if (on && start < 0) start = xx;
+      if (!on && start >= 0) {
+        let ink = 0; for (let q = start; q < xx; q++) ink += colInk[q];
+        if (!best || ink > best.ink) best = { l: start, r: xx, ink };
+        start = -1;
+      }
+    }
+    if (!best) return null;
+
+    let top = h, bottom = -1;
+    for (let yy = 0; yy < h; yy++) for (let xx = best.l; xx < best.r; xx++) if (gray[yy * w + xx] > thr) { if (yy < top) top = yy; if (yy > bottom) bottom = yy; break; }
+    const bw = best.r - best.l, bh = bottom - top + 1;
+    const g = document.createElement("canvas"); g.width = bw; g.height = bh;
+    const gx = g.getContext("2d"), img = gx.createImageData(bw, bh);
+    for (let yy = 0; yy < bh; yy++) for (let xx = 0; xx < bw; xx++) {
+      const gv = gray[(top + yy) * w + best.l + xx], v = gv > thr ? gv : 0, o = (yy * bw + xx) * 4;
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = v; img.data[o + 3] = 255;
+    }
+    gx.putImageData(img, 0, 0);
+
+    const s = 20 / Math.max(bw, bh), dw = Math.max(1, Math.round(bw * s)), dh = Math.max(1, Math.round(bh * s));
+    const m = document.createElement("canvas"); m.width = m.height = 28;
+    const mx = m.getContext("2d", { willReadFrequently: true });
+    mx.fillStyle = "#000"; mx.fillRect(0, 0, 28, 28);
+    mx.imageSmoothingQuality = "high";
+    mx.drawImage(g, 0, 0, bw, bh, (28 - dw) >> 1, (28 - dh) >> 1, dw, dh);
+    const md = mx.getImageData(0, 0, 28, 28).data;
+    const cells = new Float32Array(784);
+    let tot = 0, sx = 0, sy = 0;
+    for (let i = 0; i < 784; i++) { const v = md[i * 4] / 255; cells[i] = v; tot += v; sx += (i % 28) * v; sy += Math.floor(i / 28) * v; }
+    if (tot <= 0) return null;
+    const dx = Math.round(13.5 - sx / tot), dy = Math.round(13.5 - sy / tot);
+    const out = new Float32Array(784);
+    for (let i = 0; i < 784; i++) {
+      const nx = (((i % 28) + dx) % 28 + 28) % 28, ny = ((Math.floor(i / 28) + dy) % 28 + 28) % 28;
+      out[ny * 28 + nx] = cells[i];
+    }
+    return out;
+  }
+
+  /* ---------- The grid (what the reader sees) ---------- */
+  const grid = { ctx: el.grid.getContext("2d"), cells: new Float32Array(784), anim: null, raf: 0, done: null, hover: -1,
+    jitter: Float32Array.from({ length: 784 }, (_, i) => ((i * 9301 + 49297) % 233280) / 233280) };
+
+  function paintGrid(now = performance.now()) {
+    const ctx = grid.ctx, W = el.grid.width;
+    if (!W) return;
+    const S = W / 28, gap = Math.max(1, S * 0.1), a = grid.anim;
+    ctx.clearRect(0, 0, W, W);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "rgba(33,58,160,0.065)";
+    ctx.beginPath();
+    for (let i = 0; i < 784; i++) ctx.rect((i % 28) * S + gap / 2, Math.floor(i / 28) * S + gap / 2, S - gap, S - gap);
+    ctx.fill();
+
+    ctx.fillStyle = "rgb(33,58,160)";
+    for (let i = 0; i < 784; i++) {
+      const v = grid.cells[i];
+      if (v < 0.03) continue;
+      const cx = i % 28, cy = Math.floor(i / 28);
+      let p = 1;
+      if (a) {
+        p = (now - a.t0 - (cx + grid.jitter[i] * 1.5) * a.step) / a.dur;
+        if (p <= 0) continue;
+        p = 1 - Math.pow(1 - Math.min(1, p), 3);
+      }
+      const size = (S - gap) * (0.5 + 0.5 * p), off = (S - size) / 2;
+      ctx.globalAlpha = Math.min(1, v * 1.08) * p;
+      ctx.fillRect(cx * S + off, cy * S + off, size, size);
+    }
+    ctx.globalAlpha = 1;
+
+    if (grid.hover >= 0 && !a) {
+      const hx = grid.hover % 28, hy = Math.floor(grid.hover / 28);
+      ctx.fillStyle = "rgba(33,58,160,0.08)";
+      ctx.fillRect(0, hy * S, W, S); ctx.fillRect(hx * S, 0, S, W);
+      ctx.strokeStyle = "#D5391F"; ctx.lineWidth = Math.max(2, S * 0.1);
+      ctx.strokeRect(hx * S + gap / 2, hy * S + gap / 2, S - gap, S - gap);
+    }
+    if (a) {
+      const prog = (now - a.t0) / (28 * a.step);
+      if (prog >= 0 && prog <= 1) { ctx.fillStyle = "rgba(213,57,31,0.9)"; ctx.fillRect(prog * W - S * 0.06, 0, Math.max(2, S * 0.12), W); }
+    }
+  }
+
+  function endAnim() {
+    cancelAnimationFrame(grid.raf);
+    grid.anim = null;
+    if (grid.done) { const d = grid.done; grid.done = null; d(); }
+  }
+
+  function playGrid(cells, speed = 1) {
+    endAnim();
+    grid.cells = cells;
+    if (reduced.matches) { paintGrid(); return Promise.resolve(); }
+    const step = 16 / speed, dur = 240 / speed;
+    const total = 28 * step + 1.5 * step + dur;
+    return new Promise((resolve) => {
+      const t0 = performance.now();
+      grid.anim = { t0, step, dur, total };
+      grid.done = resolve;
+      const tick = (now) => {
+        paintGrid(now);
+        if (now - t0 >= total) { endAnim(); paintGrid(); } else grid.raf = requestAnimationFrame(tick);
+      };
+      grid.raf = requestAnimationFrame(tick);
+    });
+  }
+
+  function setGridCells(cells) { endAnim(); grid.cells = cells; paintGrid(); }
+
+  function sizeGrid() {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const w = Math.round(el.plate.clientWidth * dpr);
+    if (w && el.grid.width !== w) { el.grid.width = el.grid.height = w; paintGrid(); }
+  }
+  new ResizeObserver(sizeGrid).observe(el.plate);
+
+  for (const ruler of [el.rulerX, el.rulerY]) {
+    for (let i = 0; i < 28; i++) { const t = document.createElement("i"); if (i % 7 === 0) t.dataset.n = i; ruler.append(t); }
+  }
+
+  // Peek and hover: press or hover the grid to see the pixels behind the stamp.
+  function setHover(idx) {
+    grid.hover = idx;
+    el.rulerX.querySelectorAll("i.on").forEach((n) => n.classList.remove("on"));
+    el.rulerY.querySelectorAll("i.on").forEach((n) => n.classList.remove("on"));
+    if (idx >= 0) {
+      el.rulerX.children[idx % 28].classList.add("on");
+      el.rulerY.children[Math.floor(idx / 28)].classList.add("on");
+      el.readout.hidden = false;
+      el.readout.textContent = `col ${idx % 28}, row ${Math.floor(idx / 28)}, ink ${grid.cells[idx].toFixed(2)}`;
+    } else el.readout.hidden = true;
+    if (!grid.anim) paintGrid();
+  }
+  const peekOn = () => { if (!el.plate.classList.contains("is-empty")) el.plate.classList.add("peek"); };
+  const peekOff = () => { el.plate.classList.remove("peek"); setHover(-1); };
+  el.plate.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") peekOn(); });
+  el.plate.addEventListener("pointerdown", peekOn);
+  el.plate.addEventListener("pointerup", peekOff);
+  el.plate.addEventListener("pointercancel", peekOff);
+  el.plate.addEventListener("pointerleave", peekOff);
+  el.plate.addEventListener("pointermove", (e) => {
+    if (grid.anim || el.plate.classList.contains("is-empty")) return;
+    const r = el.grid.getBoundingClientRect();
+    const cx = Math.floor(((e.clientX - r.left) / r.width) * 28), cy = Math.floor(((e.clientY - r.top) / r.height) * 28);
+    setHover(cx >= 0 && cx < 28 && cy >= 0 && cy < 28 ? cy * 28 + cx : -1);
+  });
+
+  /* ---------- Stamp and title block ---------- */
+  function setStamp(r, animate) {
+    el.stamp.classList.remove("land", "show");
+    el.plate.classList.remove("stamped");
+    if (!r) return;
+    el.stampMain.textContent = el.stampGhost.textContent = String(r.digit);
+    el.stamp.style.setProperty("--strength", clamp01((r.conf - 0.4) / 0.6));
+    el.plate.classList.add("stamped");
+    void el.stamp.offsetWidth;
+    el.stamp.classList.add("show");
+    if (animate && !reduced.matches) {
+      el.stamp.classList.add("land");
+      el.plateWrap.classList.remove("thump"); void el.plateWrap.offsetWidth; el.plateWrap.classList.add("thump");
+    }
+  }
+
+  const pct = (n) => (n * 100).toFixed(1) + "%";
+  function updateBlock(r) {
+    el.bDigit.textContent = r ? r.text : "–";
+    el.bWord.textContent = r ? r.word : "\u00a0";
+    el.copy.disabled = !r;
+    el.copy.textContent = "Copy";
+    el.bConf.textContent = r ? pct(r.conf) : "–";
+    el.bBar.classList.toggle("low", !!r && r.conf < 0.7);
+    requestAnimationFrame(() => { el.bBar.firstElementChild.style.width = r ? clamp01(r.conf) * 100 + "%" : "0"; });
+    el.bSource.textContent = r ? r.source : "–";
+    el.bMs.textContent = r ? r.ms + " ms" : "–";
+    el.bRuns.replaceChildren();
+    if (!r) { el.bRuns.textContent = "–"; return; }
+    for (const p of r.top.slice(1)) {
+      const s = document.createElement("span"), b = document.createElement("b");
+      b.textContent = p.digit; s.append(b, pct(p.probability));
+      el.bRuns.append(s);
+    }
+  }
+
+  el.copy.addEventListener("click", async () => {
+    if (!state.current) return;
+    try { await navigator.clipboard.writeText(state.current.text); el.copy.textContent = "Copied"; }
+    catch (_) {
+      const range = document.createRange(); range.selectNodeContents(el.bDigit);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      el.copy.textContent = "Press Ctrl+C";
+    }
+    setTimeout(() => { el.copy.textContent = "Copy"; }, 1600);
+  });
+
+  function showReading(r, animate) {
+    state.current = r;
+    el.plate.classList.remove("is-empty");
+    if (!animate) setGridCells(r.cells);
+    setStamp(r, animate);
+    updateBlock(r);
+    const warning = r.warnings && r.warnings[0];
+    readStatus(warning || "Press and hold the grid to see the 28 × 28 pixels it read.", warning ? "warn" : "");
+    el.announce.textContent = "";
+    setTimeout(() => { el.announce.textContent = `Read ${r.digit}, ${r.word}, ${Math.round(r.conf * 100)} percent confident.`; }, 50);
+    renderSlips();
+  }
+
+  /* ---------- Earlier readings ---------- */
+  function renderSlips() {
+    el.earlier.hidden = state.history.length === 0;
+    el.slips.replaceChildren(...state.history.map((r) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "slip";
+      b.setAttribute("aria-pressed", String(state.current === r));
+      b.setAttribute("aria-label", `Reading ${r.digit}, ${r.source}, ${pct(r.conf)}`);
+      const c = document.createElement("canvas"); c.width = c.height = 28;
+      const cx = c.getContext("2d"), img = cx.createImageData(28, 28);
+      for (let i = 0; i < 784; i++) { const o = i * 4; img.data[o] = 33; img.data[o + 1] = 58; img.data[o + 2] = 160; img.data[o + 3] = Math.round(clamp01(r.cells[i]) * 255); }
+      cx.putImageData(img, 0, 0);
+      const num = document.createElement("b"); num.textContent = r.digit;
+      const meta = document.createElement("small"); meta.append(r.source, document.createElement("br"), pct(r.conf));
+      const box = document.createElement("span"); box.append(num, meta);
+      b.append(c, box);
+      b.addEventListener("click", () => showReading(r, false));
+      return b;
+    }));
+  }
+
+  /* ---------- API ---------- */
+  async function convert(blob, signal) {
+    const form = new FormData();
+    form.append("file", blob, blob.type === "image/png" ? "digit.png" : "digit.jpg");
+    const res = await fetch(`${API_URL}/v1/convert`, { method: "POST", body: form, signal });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { const e = new Error(typeof data.detail === "string" ? data.detail : "The API couldn't read this image."); e.api = true; throw e; }
+    return data;
+  }
+
+  async function read(canvas, source) {
+    const id = ++state.seq;
+    if (controller) controller.abort();
+    controller = new AbortController();
+    const signal = controller.signal;
+
+    state.current = null;
+    setStamp(null);
+    updateBlock(null);
+    renderSlips();
+    el.plate.classList.remove("is-empty");
+    readStatus("Reading…");
+
+    const cells = cellsFrom(canvas);
+    const sweep = cells ? playGrid(cells, source === "Drawing" ? 0.5 : 1) : (setGridCells(new Float32Array(784)), Promise.resolve());
+
+    let data, ms;
+    try {
+      const blob = await toBlob(canvas, source === "Drawing" ? "image/png" : "image/jpeg");
+      const t0 = performance.now();
+      data = await convert(blob, signal);
+      ms = Math.round(performance.now() - t0);
+    } catch (err) {
+      if (id !== state.seq || err.name === "AbortError") return;
+      readStatus(err.api ? err.message : `Can't reach the API at ${API_URL}. Start it with “uvicorn main:app”, then try again.`, "err");
+      setApi(false);
+      return;
+    }
+    await sweep;
+    if (id !== state.seq) return;
+
+    const reading = {
+      id: ++state.count, digit: data.digit, text: data.text, word: data.word, conf: data.confidence,
+      top: data.top_predictions, source, ms, warnings: data.warnings || [],
+      cells: cells ? Float32Array.from(cells) : new Float32Array(784),
+    };
+    state.history.unshift(reading);
+    state.history.length = Math.min(state.history.length, 12);
+    showReading(reading, true);
+  }
+
+  /* ---------- API status ---------- */
+  function setApi(ok) {
+    el.api.dataset.s = ok ? "ok" : "off";
+    el.apiText.textContent = (ok ? "Connected to " : "No API at ") + new URL(API_URL).host;
+  }
+  async function checkApi() {
+    el.api.dataset.s = "wait"; el.apiText.textContent = "Checking API";
+    const c = new AbortController(), t = setTimeout(() => c.abort(), 2500);
+    try { const r = await fetch(`${API_URL}/ready`, { signal: c.signal }); setApi(r.ok); }
+    catch (_) { setApi(false); }
+    finally { clearTimeout(t); }
+  }
+  el.api.addEventListener("click", checkApi);
+  el.api.title = API_URL;
+
+  /* ---------- Keyboard ---------- */
+  addEventListener("keydown", (e) => {
+    if (e.altKey || e.metaKey) return;
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey && k === "z") || (k === "backspace" && state.mode === "draw")) {
+      if (state.mode === "draw") { e.preventDefault(); undoStroke(); }
+      return;
+    }
+    if (e.ctrlKey) return;
+    if (k === "c") setMode("camera");
+    else if (k === "u") setMode("upload");
+    else if (k === "d") setMode("draw");
+    else if (k === " " && state.camera === "live" && !e.target.closest("button")) { e.preventDefault(); capture(); }
+    else if (k === "escape" && state.camera === "live") { stopCamera(); render(); }
+  });
+
+  /* ---------- Init ---------- */
+  render();
+  sizeGrid();
+  paintGrid();
+  checkApi();
+})();
+</script>
+</body>
+</html>

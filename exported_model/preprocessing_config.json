@@ -1,0 +1,36 @@
+{
+  "dataset": "MNIST (keras.datasets.mnist)",
+  "model_file": "mnist_cnn.keras",
+  "input_shape": [
+    28,
+    28,
+    1
+  ],
+  "image_size": 28,
+  "color_mode": "grayscale",
+  "pixel_dtype": "float32",
+  "pixel_scale": 255.0,
+  "normalization": "pixel / 255.0 -> values between 0 and 1",
+  "digit_color": "white digit (255) on black background (0), same as MNIST",
+  "batch_shape": [
+    null,
+    28,
+    28,
+    1
+  ],
+  "num_classes": 10,
+  "output": "10 softmax probabilities, output index = digit",
+  "random_seed": 42,
+  "split": {
+    "train": 54000,
+    "validation": 6000,
+    "test": 10000,
+    "stratified": true
+  },
+  "versions": {
+    "python": "3.13.18",
+    "tensorflow": "2.21.0",
+    "keras": "3.13.2",
+    "numpy": "2.4.6"
+  }
+}

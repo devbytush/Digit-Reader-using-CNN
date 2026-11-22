@@ -1,0 +1,12 @@
+{
+  "test_accuracy": 0.9896000027656555,
+  "test_loss": 0.027695773169398308,
+  "best_epoch": 5,
+  "epochs_run": 8,
+  "validation_accuracy_at_best_epoch": 0.9879999756813049,
+  "validation_loss_at_best_epoch": 0.04224565997719765,
+  "total_parameters": 225034,
+  "batch_size": 128,
+  "optimizer": "adam",
+  "loss": "categorical_crossentropy"
+}
