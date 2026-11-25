@@ -8,7 +8,7 @@
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Big+Shoulders+Display:wght@700;800;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --desk: #1C2A26; --desk-2: #141E1B;
@@ -16,8 +16,9 @@
     --ink: #213AA0; --ink-deep: #16257A; --ink-glow: #6F8CFF; --muted: #55634F;
     --stamp: #D5391F; --stamp-deep: #A82A15; --stamp-glow: #FF6A4D;
     --on-desk: #DCE6CF; --on-desk-muted: #8FA597;
-    --display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
-    --text: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --display: "Space Grotesk", "Big Shoulders Display", "Archivo", sans-serif;
+    --text: "Inter", "Archivo", -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
     --ease: cubic-bezier(.3, .8, .2, 1);
   }
   * { box-sizing: border-box; }
@@ -812,7 +813,10 @@
 
   function Nav({ trace }) {
     return html`<header className="nav">
-      <a className="back" href=${HOME} aria-label="Back to the reader"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Digit reader</a>
+      <div style=${{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+        <a className="back" href=${HOME} aria-label="Back to the reader"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Digit reader</a>
+        <a className="chip" href="/react" style=${{ textDecoration: "none", color: "#6F8CFF", borderColor: "rgba(111,140,255,0.3)" }}>React UI</a>
+      </div>
       ${trace ? html`<span className="chip"><span className="hide-s">Reading</span><b>${trace.prediction}</b><em>${trace.word}</em><span>${pct(trace.confidence)}</span></span>` : null}
     </header>`;
   }

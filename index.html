@@ -8,7 +8,7 @@
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Big+Shoulders+Display:wght@700;800;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   /* Palette: spruce desk, sage engineering-pad paper, ballpoint-blue ink, one red for the stamp. */
   :root {
@@ -20,26 +20,33 @@
     --rule-2: #9DB38B;
     --ink: #213AA0;
     --ink-deep: #16257A;
+    --ink-glow: #6F8CFF;
     --muted: #55634F;
     --stamp: #D5391F;
     --stamp-deep: #A82A15;
+    --stamp-glow: #FF6A4D;
     --amber: #7A5200;
     --on-desk: #DCE6CF;
     --on-desk-muted: #8FA597;
-    --display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
-    --text: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --display: "Space Grotesk", "Big Shoulders Display", "Archivo", sans-serif;
+    --text: "Inter", "Archivo", -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
     --ease: cubic-bezier(.3, .8, .2, 1);
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html { color-scheme: dark; }
   body {
-    margin: 0; min-height: 100vh; color: var(--on-desk); font: 400 15px/1.5 var(--text);
+    margin: 0; min-height: 100vh; color: var(--on-desk); font: 400 15px/1.55 var(--text);
     background-color: var(--desk);
     background-image:
-      linear-gradient(#ffffff09 1px, transparent 1px),
-      linear-gradient(90deg, #ffffff09 1px, transparent 1px);
-    background-size: 28px 28px;
+      radial-gradient(ellipse at 15% 0%, rgba(33,58,160,0.12) 0%, transparent 60%),
+      radial-gradient(ellipse at 85% 100%, rgba(213,57,31,0.08) 0%, transparent 60%),
+      linear-gradient(#ffffff0a 1px, transparent 1px),
+      linear-gradient(90deg, #ffffff0a 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 28px 28px, 28px 28px;
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
   }
   :focus-visible { outline: 2px solid var(--stamp); outline-offset: 3px; }
   button { font: inherit; color: inherit; }
@@ -60,6 +67,8 @@
   .viz:hover { background: #fff; }
   .viz:active { transform: translateY(1px); }
   .viz svg { flex: none; }
+  .react-btn { border-color: #6F8CFF; background: rgba(111,140,255,0.14); color: #6F8CFF; }
+  .react-btn:hover { background: rgba(111,140,255,0.28); color: #fff; }
   .viz.ready::after { content: ""; position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%;
     background: var(--stamp); box-shadow: 0 0 0 3px var(--desk); animation: ping 1.8s ease-out infinite; }
   @keyframes ping { 0% { box-shadow: 0 0 0 3px var(--desk), 0 0 0 3px #D5391F99; } 100% { box-shadow: 0 0 0 3px var(--desk), 0 0 0 12px #D5391F00; } }
@@ -68,6 +77,26 @@
   .api[data-s="off"] .dot { background: #F0836F; }
   .api[data-s="wait"] .dot { animation: blink 1s infinite alternate; }
   @keyframes blink { to { opacity: .25; } }
+
+  /* Draw Tools (Width & Presets) */
+  .draw-tools {
+    margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--rule-2);
+    display: flex; flex-direction: column; gap: 9px;
+  }
+  .stroke-row, .presets-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tool-label { font-size: 11px; font-weight: 600; color: var(--muted); min-width: 65px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .tool-btn {
+    padding: 3px 9px; border: 1px solid var(--rule-2); border-radius: 3px; background: var(--paper-2);
+    color: var(--ink-deep); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+  }
+  .tool-btn.active, .tool-btn:hover { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+  .presets-grid { display: flex; gap: 4px; flex-wrap: wrap; }
+  .preset-btn {
+    width: 26px; height: 26px; border: 1px solid var(--rule-2); border-radius: 3px; background: var(--paper);
+    color: var(--ink); font-family: var(--display); font-weight: 700; font-size: 13px; cursor: pointer;
+    transition: all 0.12s;
+  }
+  .preset-btn:hover { border-color: var(--ink); background: var(--ink); color: var(--paper); transform: translateY(-1px); }
 
   /* Layout */
   .board { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
@@ -269,6 +298,10 @@
       <p>Handwritten digit to text</p>
     </div>
     <div class="tools">
+      <a class="viz react-btn" id="reactBtn" href="/react" title="Open modern React + GSAP + Lenis interface">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+        React UI
+      </a>
       <a class="viz" id="viz" href="visualize.html" title="See how the network reads your digit, layer by layer">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
         Visualize
@@ -331,6 +364,31 @@
         <button class="btn primary grow" id="browse" type="button" hidden>Choose a photo</button>
         <button class="btn" id="undo" type="button" hidden>Undo</button>
         <button class="btn" id="clear" type="button" hidden>Clear</button>
+      </div>
+
+      <!-- Quick Draw Presets & Stroke Width (shown in draw mode) -->
+      <div class="draw-tools" id="drawTools" hidden>
+        <div class="stroke-row">
+          <span class="tool-label">Stroke:</span>
+          <button class="tool-btn stroke-btn" data-pen="0.04" type="button">Fine</button>
+          <button class="tool-btn stroke-btn active" data-pen="0.07" type="button">Normal</button>
+          <button class="tool-btn stroke-btn" data-pen="0.11" type="button">Bold</button>
+        </div>
+        <div class="presets-row">
+          <span class="tool-label">Quick Test:</span>
+          <div class="presets-grid" id="presetsGrid">
+            <button class="preset-btn" data-digit="0" type="button">0</button>
+            <button class="preset-btn" data-digit="1" type="button">1</button>
+            <button class="preset-btn" data-digit="2" type="button">2</button>
+            <button class="preset-btn" data-digit="3" type="button">3</button>
+            <button class="preset-btn" data-digit="4" type="button">4</button>
+            <button class="preset-btn" data-digit="5" type="button">5</button>
+            <button class="preset-btn" data-digit="6" type="button">6</button>
+            <button class="preset-btn" data-digit="7" type="button">7</button>
+            <button class="preset-btn" data-digit="8" type="button">8</button>
+            <button class="preset-btn" data-digit="9" type="button">9</button>
+          </div>
+        </div>
       </div>
       <p class="status" id="inputStatus" role="status"></p>
     </section>
@@ -425,6 +483,7 @@
     bDigit: $("#bDigit"), bWord: $("#bWord"), copy: $("#copy"), bConf: $("#bConf"), bBar: $("#bBar"),
     bRuns: $("#bRuns"), bSource: $("#bSource"), bMs: $("#bMs"),
     earlier: $("#earlier"), slips: $("#slips"), api: $("#api"), apiText: $("#apiText"), viz: $("#viz"),
+    drawTools: $("#drawTools"),
   };
 
   const state = {
@@ -463,6 +522,7 @@
     el.browse.textContent = state.hasImage ? "Choose another photo" : "Choose a photo";
     show(el.undo, state.mode === "draw");
     show(el.clear, state.mode === "draw");
+    show(el.drawTools, state.mode === "draw");
     el.undo.disabled = el.clear.disabled = pad.strokes.length === 0;
   }
 
@@ -619,7 +679,33 @@
 
   /* ---------- Drawing ---------- */
   const pad = { ctx: el.pad.getContext("2d"), strokes: [], active: null, size: 0, dpr: 1, timer: 0 };
-  const PEN = 0.07; // pen width as a fraction of the canvas size
+  let PEN = 0.07; // pen width as a fraction of the canvas size
+
+  // Stroke width selector
+  document.querySelectorAll(".stroke-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".stroke-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      PEN = parseFloat(btn.dataset.pen);
+      repaintPad();
+    });
+  });
+
+  // Quick preset test digits
+  document.querySelectorAll(".preset-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const digit = btn.dataset.digit;
+      const c = document.createElement("canvas");
+      c.width = c.height = 280;
+      const x = c.getContext("2d");
+      x.fillStyle = "#fff"; x.fillRect(0, 0, 280, 280);
+      x.font = 'bold 180px "Space Grotesk", "Big Shoulders Display", sans-serif';
+      x.textAlign = "center"; x.textBaseline = "middle";
+      x.fillStyle = "#000";
+      x.fillText(digit, 140, 140);
+      read(c, `Preset "${digit}"`);
+    });
+  });
 
   function drawStrokes(ctx, size, strokes, color) {
     ctx.lineCap = ctx.lineJoin = "round";

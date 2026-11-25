@@ -63,18 +63,24 @@ It is built to cope with real photos rather than only clean MNIST test images. P
 ## Tech stack
 
 - **Model:** TensorFlow / Keras CNN trained on MNIST, exported as `mnist_cnn.keras`
-- **Backend:** FastAPI, Uvicorn, Pydantic v2, NumPy, Pillow
-- **Frontend:** one dependency-free `index.html` (vanilla JavaScript, canvas, `getUserMedia`)
+- **Backend:** FastAPI, Uvicorn, Pydantic v2, NumPy, Pillow, WebSockets
+- **Modern Frontend (React):** React 18, Vite, GSAP 3, Lenis, Framer Motion, Tailwind CSS (served at `/react`)
+- **Classic Frontend:** Standalone vanilla `index.html` (canvas, `getUserMedia`, zero build step)
+- **3D Network Visualizer:** Three.js, GSAP ScrollTrigger, Lenis (served at `/visualize`)
 - **Hosting:** Render
 
 ## Project structure
 
 ```text
 Digit-Reader-using-CNN/
-├── main.py                       # FastAPI app: preprocessing, inference, endpoints
-├── index.html                    # Frontend served at "/" (camera, upload, draw)
+├── main.py                       # FastAPI app: preprocessing, inference, endpoints, WebSockets
+├── index.html                    # Classic frontend served at "/" (camera, upload, draw)
 ├── visualize.html                # 3D network visualizer served at "/visualize"
 ├── visualize.py                  # Builds exported_model/viz_data.json for the visualizer
+├── frontend/                     # Modern React frontend (Vite + GSAP + Lenis + Tailwind)
+│   ├── src/                      # React components (DrawingPad, Camera, Upload, Results, History)
+│   ├── dist/                     # Production build served at "/react"
+│   └── package.json
 ├── requirements.txt              # Python dependencies
 ├── exported_model/
 │   ├── mnist_cnn.keras           # Trained CNN
@@ -173,7 +179,11 @@ curl -X POST -F "file=@digit.jpg" https://digit-reader-using-cnn.onrender.com/v1
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /` | The web app |
+| `GET /` | The classic web app |
+| `GET /react` | The modern React + GSAP + Lenis web app |
+| `POST /v1/convert-base64` | Convert a base64-encoded image string to text |
+| `GET /v1/metrics` | Model parameters, uptime, and request stats |
+| `WS /ws/draw` | WebSocket for real-time streaming digit recognition |
 | `GET /health` | Liveness probe |
 | `GET /ready` | Readiness probe, succeeds once the model is loaded |
 | `GET /visualize` | The 3D network visualizer |

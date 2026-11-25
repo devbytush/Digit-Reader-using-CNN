@@ -1,0 +1,147 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ───────────────────────────── Base ───────────────────────────── */
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  html.lenis,
+  html.lenis body {
+    height: auto;
+  }
+
+  .lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+
+  body {
+    margin: 0;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: rgba(111, 140, 255, 0.3);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 2px solid #FF6A4D;
+    outline-offset: 3px;
+  }
+}
+
+/* ───────────────────────── Ambient grid ───────────────────────── */
+
+.ambient-grid {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* ──────────────────────── Paper texture ───────────────────────── */
+
+.paper-bg {
+  background-color: #E3EBD6;
+  background-image:
+    linear-gradient(#B8C9A6 1px, transparent 1px),
+    linear-gradient(90deg, #B8C9A6 1px, transparent 1px),
+    linear-gradient(#D0DCC2 1px, transparent 1px),
+    linear-gradient(90deg, #D0DCC2 1px, transparent 1px);
+  background-size: 140px 140px, 140px 140px, 28px 28px, 28px 28px;
+}
+
+/* ──────────────────── Custom scrollbar ────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(143, 165, 151, 0.4);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(143, 165, 151, 0.6);
+}
+
+/* ───────────────────── Drawing canvas ─────────────────────────── */
+
+.drawing-canvas {
+  touch-action: none;
+  cursor: crosshair;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* ──────────────────── Confidence bar ──────────────────────────── */
+
+.confidence-fill {
+  transition: width 0.8s cubic-bezier(0.3, 0.8, 0.2, 1);
+}
+
+/* ──────────────────── Stamp animation ─────────────────────────── */
+
+.stamp-enter {
+  animation: stampLand 0.52s cubic-bezier(0.2, 0.9, 0.25, 1.08) forwards;
+}
+
+@keyframes stampLand {
+  0%   { opacity: 0; transform: rotate(-10deg) scale(1.6); }
+  55%  { opacity: 1; transform: rotate(-3deg) scale(0.97); }
+  100% { opacity: 1; transform: rotate(-3deg) scale(1); }
+}
+
+/* ──────────────────── Tab indicator ───────────────────────────── */
+
+.tab-indicator {
+  transition: transform 0.3s cubic-bezier(0.3, 0.8, 0.2, 1);
+}
+
+/* ──────────────────── Grid pixel animation ────────────────────── */
+
+.grid-pixel {
+  transition: opacity 0.15s ease;
+}
+
+/* ──────────────────── History scroll ──────────────────────────── */
+
+.history-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.history-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* ──────────────────── Reduced motion ─────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

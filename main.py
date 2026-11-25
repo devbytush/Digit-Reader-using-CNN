@@ -11,6 +11,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time as _time
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -19,10 +21,11 @@ from threading import Lock
 from typing import Annotated, Any, AsyncIterator
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -80,6 +83,19 @@ class DigitResponse(BaseModel):
 
 class StatusResponse(BaseModel):
     status: str
+
+
+class Base64Request(BaseModel):
+    image: str = Field(description="Base64-encoded image data (data URI or raw base64 string)")
+
+
+class MetricsResponse(BaseModel):
+    model_name: str
+    total_params: int
+    uptime_seconds: float = Field(description="Seconds since the server started")
+    total_requests: int
+    model_loaded: bool
+    input_shape: list[int]
 
 
 # --------------------------------------------------------------------------- #
@@ -429,6 +445,28 @@ app.add_middleware(
 )
 
 
+# --------------------------------------------------------------------------- #
+# Request lifecycle middleware
+# --------------------------------------------------------------------------- #
+_boot_time = _time.monotonic()
+_request_count = 0
+
+
+@app.middleware("http")
+async def request_lifecycle(request: Request, call_next):
+    global _request_count
+    _request_count += 1
+    request_id = uuid.uuid4().hex[:8]
+    start = _time.monotonic()
+    response = await call_next(request)
+    elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Response-Time"] = f"{elapsed_ms}ms"
+    if request.url.path == "/v1/model":
+        response.headers["Cache-Control"] = "public, max-age=300"
+    return response
+
+
 def _get_classifier(request: Request) -> DigitClassifier:
     classifier: DigitClassifier | None = getattr(request.app.state, "classifier", None)
     if classifier is None:
@@ -451,6 +489,22 @@ async def visualize_page() -> Response:
     if not page.is_file():
         raise HTTPException(404, "visualize.html was not found next to main.py.")
     return FileResponse(page)
+
+
+FRONTEND_DIST = APP_DIR / "frontend" / "dist"
+if (FRONTEND_DIST / "assets").is_dir():
+    app.mount("/react/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="react_assets")
+
+
+@app.get("/react", include_in_schema=False)
+@app.get("/react/", include_in_schema=False)
+@app.get("/app", include_in_schema=False)
+async def react_app() -> Response:
+    """Serve the modern React + GSAP + Lenis frontend."""
+    dist_page = FRONTEND_DIST / "index.html"
+    if dist_page.is_file():
+        return FileResponse(dist_page)
+    raise HTTPException(404, "React frontend build not found. Run 'npm run build' inside frontend/")
 
 
 @app.get("/health", response_model=StatusResponse, tags=["system"])
@@ -514,3 +568,89 @@ async def trace(
     classifier = _get_classifier(request)
     contents = await _read_limited(file)
     return await run_in_threadpool(_trace, contents, classifier)
+
+
+# --------------------------------------------------------------------------- #
+# Additional endpoints
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/v1/convert-base64",
+    response_model=DigitResponse,
+    tags=["conversion"],
+    summary="Convert a base64-encoded handwritten digit image to text",
+    responses={
+        400: {"description": "Invalid or empty base64"},
+        413: {"description": "Image too large"},
+        415: {"description": "Unsupported or unreadable image"},
+        422: {"description": "No digit found"},
+        503: {"description": "Model not loaded"},
+    },
+)
+async def convert_base64(request: Request, body: Base64Request) -> DigitResponse:
+    classifier = _get_classifier(request)
+    raw = body.image.strip()
+    # Strip the data-URI prefix if the client sent one (e.g. "data:image/png;base64,...")
+    if "," in raw and raw.index(",") < 120:
+        raw = raw.split(",", 1)[1]
+    try:
+        contents = base64.b64decode(raw, validate=True)
+    except Exception as exc:
+        raise HTTPException(400, "Invalid base64 image data.") from exc
+    if not contents:
+        raise HTTPException(400, "The decoded image data is empty.")
+    if len(contents) > settings.max_upload_bytes:
+        raise HTTPException(
+            413,
+            f"Image exceeds the {settings.max_upload_bytes // (1024 * 1024)} MB limit.",
+        )
+    return await run_in_threadpool(_recognize, contents, classifier)
+
+
+@app.get(
+    "/v1/metrics",
+    response_model=MetricsResponse,
+    tags=["system"],
+    summary="Model and server metrics",
+)
+async def metrics(request: Request) -> MetricsResponse:
+    classifier = getattr(request.app.state, "classifier", None)
+    architecture = getattr(request.app.state, "architecture", None)
+    return MetricsResponse(
+        model_name=architecture["name"] if architecture else "unknown",
+        total_params=architecture["total_params"] if architecture else 0,
+        uptime_seconds=round(_time.monotonic() - _boot_time, 1),
+        total_requests=_request_count,
+        model_loaded=classifier is not None,
+        input_shape=architecture["input_shape"] if architecture else [28, 28, 1],
+    )
+
+
+@app.websocket("/ws/draw")
+async def ws_draw(ws: WebSocket) -> None:
+    """Real-time digit recognition over WebSocket.
+
+    Send ``{"image": "<base64>"}`` and receive the full ``DigitResponse`` as
+    JSON.  The *image* value may be a raw base64 string or a data-URI.
+    """
+    await ws.accept()
+    classifier = getattr(ws.app.state, "classifier", None)
+    if classifier is None:
+        await ws.close(1011, "Model is not loaded.")
+        return
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                payload = json.loads(raw)
+                image_data = payload.get("image", "")
+                if "," in image_data and image_data.index(",") < 120:
+                    image_data = image_data.split(",", 1)[1]
+                contents = base64.b64decode(image_data, validate=True)
+                result = await run_in_threadpool(_recognize, contents, classifier)
+                await ws.send_json(result.model_dump())
+            except HTTPException as exc:
+                await ws.send_json({"error": exc.detail})
+            except Exception as exc:  # noqa: BLE001
+                await ws.send_json({"error": f"Processing error: {exc}"})
+    except WebSocketDisconnect:
+        pass
