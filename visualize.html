@@ -1,0 +1,1133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1C2A26">
+<title>Inside the network | Digit reader</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --desk: #1C2A26; --desk-2: #141E1B;
+    --paper: #E3EBD6; --paper-2: #D3DEC2; --rule: #B8C9A6; --rule-soft: #D0DCC2; --rule-2: #9DB38B;
+    --ink: #213AA0; --ink-deep: #16257A; --ink-glow: #6F8CFF; --muted: #55634F;
+    --stamp: #D5391F; --stamp-deep: #A82A15; --stamp-glow: #FF6A4D;
+    --on-desk: #DCE6CF; --on-desk-muted: #8FA597;
+    --display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
+    --text: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --ease: cubic-bezier(.3, .8, .2, 1);
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  html.lenis, html.lenis body { height: auto; }
+  .lenis.lenis-smooth { scroll-behavior: auto !important; }
+  .lenis.lenis-stopped { overflow: hidden; }
+  body { margin: 0; background: var(--desk); color: var(--on-desk); font: 400 15px/1.55 var(--text); overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--stamp-glow); outline-offset: 3px; }
+  [hidden] { display: none !important; }
+
+  /* 3D scene sits behind everything; the UI layer only catches pointer events on its own controls */
+  #scene { position: fixed; inset: 0; z-index: 0; background: var(--desk); touch-action: pan-y; }
+  #scene canvas { display: block; cursor: grab; }
+  #scene.drag canvas { cursor: grabbing; }
+  .ui { position: relative; z-index: 1; pointer-events: none; }
+  .nav, .nav a, .chip, .card, .btn, .rail, .dock, .toast, #training, .overlay { pointer-events: auto; }
+
+  .sheet { color: var(--ink-deep); background-color: var(--paper); border-radius: 6px;
+    background-image: linear-gradient(var(--rule) 1px, transparent 1px), linear-gradient(90deg, var(--rule) 1px, transparent 1px),
+      linear-gradient(var(--rule-soft) 1px, transparent 1px), linear-gradient(90deg, var(--rule-soft) 1px, transparent 1px);
+    background-size: 140px 140px, 140px 140px, 28px 28px, 28px 28px; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; height: 48px; padding: 0 20px;
+    border: 1.5px solid var(--on-desk); border-radius: 4px; background: transparent; color: var(--on-desk);
+    font-weight: 700; font-stretch: 108%; text-decoration: none; cursor: pointer; transition: background-color .15s, transform .1s; }
+  .btn:hover { background: #ffffff14; }
+  .btn:active { transform: translateY(1px); }
+  .btn.solid { background: var(--paper); border-color: var(--paper); color: var(--ink-deep); }
+  .btn.solid:hover { background: #fff; }
+  .btn.ink { border-color: var(--ink); color: var(--ink); }
+  .btn.ink:hover { background: #213AA014; }
+  .btn.sm { height: 36px; padding: 0 14px; font-size: 13px; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* Nav */
+  .nav { position: fixed; top: 0; left: 0; right: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 14px clamp(14px, 3vw, 34px); pointer-events: none; }
+  .back { display: inline-flex; align-items: center; gap: 10px; padding: 6px 10px 6px 6px; border-radius: 4px; text-decoration: none;
+    font: 800 22px/1 var(--display); letter-spacing: .02em; background: #1C2A26b8; backdrop-filter: blur(8px); }
+  .back svg { flex: none; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid #ffffff26; border-radius: 4px;
+    background: #1C2A26b8; backdrop-filter: blur(8px); font-size: 13px; color: var(--on-desk-muted); }
+  .chip b { font: 900 24px/1 var(--display); color: var(--stamp-glow); }
+  .chip em { font-style: normal; color: var(--on-desk); font-weight: 600; }
+  @media (max-width: 560px) { .chip .hide-s { display: none; } }
+
+  /* Hero */
+  .hero { min-height: 100svh; display: grid; align-content: center; padding: 110px clamp(16px, 6vw, 96px) 70px; }
+  .hero h1 { margin: 0; font: 900 clamp(3.4rem, 11.5vw, 9.6rem)/.84 var(--display); letter-spacing: -.005em; }
+  .hero h1 .ln { display: block; overflow: hidden; padding-bottom: .04em; }
+  .hero h1 .ln i { display: block; font-style: normal; }
+  .hero h1 .hot { color: var(--stamp-glow); }
+  .hero p { max-width: 46ch; margin: 22px 0 0; color: var(--on-desk-muted); font-size: clamp(15px, 1.5vw, 18px); }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .hint { margin-top: 36px; display: flex; align-items: center; gap: 10px; color: var(--on-desk-muted); font-size: 13px; }
+  .hint kbd, .hint i { display: none; }
+  .hint span.bar { width: 40px; height: 1px; background: var(--on-desk-muted); }
+
+  /* Stages */
+  .stage { min-height: 110vh; display: flex; align-items: center; padding: 0 clamp(16px, 6vw, 96px); }
+  .card { width: min(410px, 100%); padding: 20px 20px 18px; }
+  .card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .idx { font: 800 20px/1 var(--display); letter-spacing: .04em; color: var(--ink); }
+  .idx i { font-style: normal; color: var(--muted); }
+  .code { font-size: 12px; color: var(--muted); }
+  .card h2 { margin: 6px 0 8px; font: 900 clamp(2.6rem, 5vw, 3.6rem)/.88 var(--display); color: var(--ink); }
+  .lead { margin: 0; font-size: 15px; }
+  .block { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5px; margin-top: 16px; border: 1.5px solid var(--ink); background: var(--ink); }
+  .block > div { padding: 8px 11px; background: var(--paper); min-width: 0; }
+  .k { display: block; font-size: 12px; color: var(--muted); }
+  .v { display: block; margin-top: 1px; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .thumb { image-rendering: pixelated; border: 1px solid var(--ink); border-radius: 2px; background: #1E2E29; }
+  .note { margin: 14px 0 0; font-size: 14px; }
+  .note b { color: var(--stamp-deep); font-weight: 800; margin-right: 6px; }
+  .aside { margin: 10px 0 0; padding-top: 10px; border-top: 1px dashed var(--rule-2); font-size: 13px; color: var(--muted); }
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 46px; margin-top: 14px; }
+  .spark i { flex: 1; min-width: 2px; background: var(--ink); border-radius: 1px 1px 0 0; }
+  .outbars { display: grid; gap: 4px; margin-top: 14px; }
+  .outbars div { display: grid; grid-template-columns: 18px 1fr 52px; align-items: center; gap: 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .outbars b { font: 800 18px/1 var(--display); }
+  .outbars span.t { height: 8px; background: var(--paper-2); border: 1px solid var(--rule-2); }
+  .outbars span.t i { display: block; height: 100%; background: var(--ink); transform-origin: left; transition: transform .8s var(--ease); }
+  .outbars .win b { color: var(--stamp); }
+  .outbars .win span.t i { background: var(--stamp); }
+  .outbars em { font-style: normal; text-align: right; }
+
+  @media (max-width: 859px) {
+    .stage { align-items: flex-end; padding-bottom: 6vh; }
+    .card { width: 100%; max-width: 520px; }
+    .lead { font-size: 14px; }
+  }
+
+  /* Rail */
+  .rail { position: fixed; right: clamp(10px, 2vw, 24px); top: 50%; z-index: 20; display: grid; gap: 4px; transform: translateY(-50%); }
+  .rail button { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 10px; width: 28px; height: 22px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+  .rail button::after { content: ""; width: 10px; height: 10px; border: 1.5px solid var(--on-desk-muted); border-radius: 2px; background: transparent; transition: all .2s; flex: none; }
+  .rail button.on::after { width: 14px; height: 14px; border-color: var(--stamp-glow); background: var(--stamp-glow); transform: rotate(45deg) scale(.8); }
+  .rail button span { position: absolute; right: 26px; padding: 3px 8px; border-radius: 3px; background: var(--paper); color: var(--ink-deep); font-size: 12px; font-weight: 700; white-space: nowrap; opacity: 0; transform: translateX(6px); transition: all .18s; pointer-events: none; }
+  .rail button:hover span, .rail button:focus-visible span { opacity: 1; transform: none; }
+  @media (max-width: 859px) { .rail { display: none; } }
+
+  /* Dock: change the input at any time */
+  .dock { position: fixed; right: clamp(12px, 2vw, 24px); bottom: clamp(12px, 2vw, 24px); z-index: 40; display: grid; justify-items: end; gap: 10px; pointer-events: none; }
+  .dock-btn { display: inline-flex; align-items: center; gap: 10px; height: 46px; padding: 0 16px; border: 0; border-radius: 4px; background: var(--paper); color: var(--ink-deep); font-weight: 700; font-stretch: 108%; cursor: pointer; pointer-events: auto; box-shadow: 0 8px 28px #0006; }
+  .dock-btn:hover { background: #fff; }
+  .dock-btn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+  .dock-btn.busy .dot { background: var(--stamp); animation: blink .6s infinite alternate; }
+  @keyframes blink { to { opacity: .2; } }
+  .panel { width: min(300px, calc(100vw - 24px)); padding: 14px; pointer-events: auto; box-shadow: 0 16px 48px #0008; }
+  .panel h3 { margin: 0 0 2px; font: 800 22px/1 var(--display); color: var(--ink); letter-spacing: .02em; }
+  .panel p { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+  #pad { display: block; width: 100%; aspect-ratio: 1; border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); touch-action: none; cursor: crosshair; }
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .samples { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 12px; }
+  .sample { padding: 0; border: 1.5px solid transparent; border-radius: 3px; background: #1E2E29; cursor: pointer; line-height: 0; }
+  .sample:hover { border-color: var(--stamp); }
+  .sample canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; }
+  .label { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
+
+  .tip { position: fixed; z-index: 50; pointer-events: none; padding: 6px 10px; border-radius: 3px; background: var(--paper); color: var(--ink-deep); font-size: 12px; font-weight: 700; box-shadow: 0 6px 20px #0006; }
+  .tip small { display: block; font-weight: 500; color: var(--muted); }
+  .toast { position: fixed; left: 50%; bottom: 24px; z-index: 60; max-width: min(520px, calc(100vw - 32px)); padding: 12px 16px; border-radius: 4px; background: var(--stamp-deep); color: #fff; font-weight: 600; transform: translateX(-50%); box-shadow: 0 10px 30px #0008; }
+
+  .overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; gap: 12px; padding: 24px; text-align: center; background: var(--desk); }
+  .overlay h2 { margin: 0; font: 900 clamp(2.4rem, 7vw, 4rem)/.9 var(--display); }
+  .overlay p { max-width: 44ch; margin: 0 auto; color: var(--on-desk-muted); }
+  .overlay .row { justify-content: center; }
+  .loader { display: grid; grid-template-columns: repeat(7, 10px); gap: 3px; justify-content: center; margin-bottom: 8px; }
+  .loader i { width: 10px; height: 10px; background: var(--ink-glow); opacity: .15; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: 1; } }
+
+  /* Training */
+  .training { position: relative; padding: clamp(72px, 11vw, 140px) clamp(16px, 6vw, 96px) 40px; background: var(--desk);
+    background-image: linear-gradient(#ffffff09 1px, transparent 1px), linear-gradient(90deg, #ffffff09 1px, transparent 1px); background-size: 28px 28px; }
+  .training::before { content: ""; position: absolute; left: 0; right: 0; top: -120px; height: 120px; background: linear-gradient(transparent, var(--desk)); pointer-events: none; }
+  .t-head h2 { margin: 0; font: 900 clamp(3rem, 9vw, 7rem)/.86 var(--display); }
+  .t-head p { max-width: 52ch; margin: 16px 0 0; color: var(--on-desk-muted); font-size: clamp(15px, 1.4vw, 17px); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin: 44px 0 20px; }
+  .stat { padding: 16px 18px; border: 1px solid #ffffff22; border-radius: 6px; background: #ffffff08; }
+  .stat b { display: block; font: 900 clamp(2.6rem, 5vw, 3.8rem)/1 var(--display); font-variant-numeric: tabular-nums; }
+  .stat:first-child b { color: var(--stamp-glow); }
+  .stat span { font-size: 13px; color: var(--on-desk-muted); }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 20px; margin-top: 20px; }
+  .pane { padding: 18px; }
+  .pane h3 { margin: 0; font: 900 32px/1 var(--display); color: var(--ink); }
+  .pane > p { margin: 4px 0 12px; font-size: 13px; color: var(--muted); }
+  .readout { display: flex; flex-wrap: wrap; gap: 4px 16px; min-height: 22px; margin-bottom: 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .readout b { font-weight: 800; }
+  .legend { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 14px; height: 3px; display: inline-block; }
+  svg.chart { width: 100%; height: auto; display: block; touch-action: pan-y; }
+  svg.chart text { font: 500 11px var(--text); fill: var(--muted); }
+  svg.chart .grid { stroke: var(--rule-2); stroke-opacity: .6; stroke-dasharray: 2 4; }
+  svg.chart .line { fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+
+  .cm { display: grid; grid-template-columns: 22px repeat(10, 1fr); gap: 2px; font-variant-numeric: tabular-nums; }
+  .cm .h { display: grid; place-items: center; font: 800 15px/1 var(--display); color: var(--muted); }
+  .cm .h.on { color: var(--stamp); }
+  .cm .c { position: relative; display: grid; place-items: center; aspect-ratio: 1; border: 1px solid #16257A22; font-size: clamp(8px, 1.3vw, 12px); font-weight: 700; color: #fff; }
+  .cm .c.z { color: transparent; }
+  .cm .c.hl { outline: 2px solid var(--ink-deep); outline-offset: -1px; z-index: 1; }
+  .axis { display: flex; justify-content: space-between; margin: 6px 0 0 22px; font-size: 12px; color: var(--muted); }
+  .cm-wrap { margin-top: 4px; }
+
+  .pc { display: grid; gap: 7px; }
+  .pc div { display: grid; grid-template-columns: 22px 1fr 56px; align-items: center; gap: 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .pc b { font: 900 24px/1 var(--display); color: var(--ink); }
+  .pc .t { height: 12px; background: var(--paper-2); border: 1px solid var(--rule-2); }
+  .pc .t i { display: block; height: 100%; width: 100%; background: var(--ink); transform-origin: left; }
+  .pc .low .t i { background: var(--stamp); }
+  .pc em { font-style: normal; text-align: right; font-weight: 700; }
+
+  .kern { display: grid; grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 8px; }
+  .kern canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border: 1px solid var(--ink); border-radius: 2px; }
+  .legend2 { display: flex; gap: 16px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .legend2 i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -2px; border-radius: 2px; }
+
+  .misses { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+  .miss { padding: 8px; border: 1.5px solid transparent; border-radius: 4px; background: var(--paper-2); text-align: center; cursor: pointer; }
+  .miss:hover { border-color: var(--stamp); }
+  .miss canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; background: #1E2E29; border-radius: 2px; }
+  .miss span { display: block; margin-top: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .miss b { font: 900 20px/1 var(--display); color: var(--stamp-deep); }
+
+  .empty { margin-top: 36px; padding: 22px; border: 1.5px dashed #ffffff33; border-radius: 6px; max-width: 640px; }
+  .empty h3 { margin: 0 0 6px; font: 800 26px/1 var(--display); }
+  .empty p { margin: 0 0 12px; color: var(--on-desk-muted); }
+  .empty code, .empty pre { font: 600 13px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--on-desk); }
+  .empty pre { margin: 0; padding: 12px 14px; border-radius: 4px; background: #0000004d; overflow-x: auto; }
+
+  .foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-top: 80px; padding-top: 22px; border-top: 1px solid #ffffff22; color: var(--on-desk-muted); font-size: 13px; }
+
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.1.13/dist/lenis.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+
+<script>
+(() => {
+  "use strict";
+
+  const missing = ["React", "ReactDOM", "htm", "gsap", "ScrollTrigger", "Lenis", "THREE"].filter((k) => !window[k]);
+  if (missing.length) {
+    document.getElementById("root").innerHTML =
+      '<div style="padding:48px;max-width:560px;font:16px/1.6 sans-serif;color:#DCE6CF"><h1 style="font-size:30px;margin:0 0 8px">The visualizer could not load</h1>' +
+      "<p>These libraries failed to download: " + missing.join(", ") + ". Check your internet connection and reload the page.</p></div>";
+    return;
+  }
+
+  const { useState, useEffect, useRef, useMemo, useCallback } = React;
+  const html = htm.bind(React.createElement);
+  gsap.registerPlugin(ScrollTrigger);
+
+  /* ====================================================================== */
+  /* Config and helpers                                                      */
+  /* ====================================================================== */
+  const params = new URLSearchParams(location.search);
+  const explicitApi = params.get("api");
+  const API_URL = (explicitApi || (/^https?:$/.test(location.protocol) ? location.origin : "http://localhost:8000")).replace(/\/$/, "");
+  const HOME = API_URL === location.origin ? "/" : "index.html" + (explicitApi ? "?api=" + encodeURIComponent(explicitApi) : "");
+  const STAGE_VH = 1.1;           // each stage section is 110vh tall (matches .stage min-height)
+  const SP = 5.6;                 // distance between layers in the 3D scene
+  const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+  const prefersReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const isMobile = () => innerWidth < 860;
+
+  const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const smooth = (t) => t * t * (3 - 2 * t);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const pct = (v, d = 1) => (v * 100).toFixed(d) + "%";
+  const fmt = (n) => Number(n).toLocaleString("en-US");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function fromB64(s) { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+
+  async function getJSON(path) {
+    const r = await fetch(API_URL + path);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : "Request failed (" + r.status + ")");
+    return d;
+  }
+  async function postTrace(blob) {
+    const f = new FormData();
+    f.append("file", blob, "digit.png");
+    const r = await fetch(API_URL + "/v1/trace", { method: "POST", body: f });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : "Could not trace this image.");
+    return d;
+  }
+
+  /* ---------- Colour ramp for activations: quiet -> ink -> glow -> paper ---------- */
+  const LUT = (() => {
+    const st = [[0, [30, 46, 41]], [0.2, [33, 58, 160]], [0.55, [100, 130, 255]], [1, [238, 243, 228]]];
+    const o = new Uint8Array(768);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255; let a = st[0], b = st[1];
+      for (let s = 1; s < st.length; s++) { a = st[s - 1]; b = st[s]; if (t <= st[s][0]) break; }
+      const u = clamp((t - a[0]) / (b[0] - a[0] || 1));
+      for (let c = 0; c < 3; c++) o[i * 3 + c] = Math.round(lerp(a[1][c], b[1][c], u));
+    }
+    return o;
+  })();
+
+  function paintMap(cv, u8, off, w, h) {
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const x = cv.getContext("2d"), im = x.createImageData(w, h), d = im.data;
+    for (let i = 0; i < w * h; i++) {
+      const v = off + i < u8.length ? u8[off + i] : 0, o = i * 4, l = v * 3;
+      d[o] = LUT[l]; d[o + 1] = LUT[l + 1]; d[o + 2] = LUT[l + 2]; d[o + 3] = 255;
+    }
+    x.putImageData(im, 0, 0);
+  }
+  function paintDots(cv, u8, n, cols) {
+    const rows = Math.ceil(n / cols), c = 16;
+    cv.width = cols * c; cv.height = rows * c;
+    const x = cv.getContext("2d");
+    x.fillStyle = "#16211E"; x.fillRect(0, 0, cv.width, cv.height);
+    for (let i = 0; i < n; i++) {
+      const v = u8 ? u8[i] : 0, l = v * 3;
+      x.fillStyle = "rgb(" + LUT[l] + "," + LUT[l + 1] + "," + LUT[l + 2] + ")";
+      x.beginPath(); x.arc((i % cols + 0.5) * c, (Math.floor(i / cols) + 0.5) * c, c * (0.2 + 0.28 * v / 255), 0, 6.2832); x.fill();
+    }
+  }
+
+  /* ---------- Turn the API description into scroll stages ---------- */
+  const PASS = new Set(["Dropout", "SpatialDropout1D", "SpatialDropout2D", "GaussianDropout", "GaussianNoise", "AlphaDropout"]);
+  const TITLES = { Conv2D: "Convolution", MaxPooling2D: "Max pooling", AveragePooling2D: "Average pooling", Flatten: "Flatten", Dense: "Dense",
+    BatchNormalization: "Batch norm", Activation: "Activation", ReLU: "ReLU", GlobalAveragePooling2D: "Global pooling", Rescaling: "Rescaling" };
+
+  function buildStages(model) {
+    const stages = [{ kind: "input", type: "Input", name: "input", title: "Input", shape: model.input_shape, params: 0, config: {} }];
+    model.layers.forEach((l) => {
+      if (PASS.has(l.type)) { const prev = stages[stages.length - 1]; (prev.notes = prev.notes || []).push(l); return; }
+      stages.push({ ...l, kind: "layer", shape: l.output_shape, title: TITLES[l.type] || l.type });
+    });
+    const last = stages[stages.length - 1];
+    if (last.kind === "layer") { last.isOutput = true; last.title = "Decision"; }
+    stages.forEach((s, i) => { s.i = i; });
+    return stages;
+  }
+
+  function decodeTrace(trace) {
+    const byName = {};
+    trace.layers.forEach((l) => {
+      const u8 = fromB64(l.data), sh = l.shape;
+      let H = 1, W = sh[0], C = 1;
+      if (sh.length === 3) { H = sh[0]; W = sh[1]; C = sh[2]; } else if (sh.length === 2) { H = sh[0]; W = sh[1]; }
+      const plane = H * W, means = new Float32Array(C);
+      for (let c = 0; c < C; c++) { let s = 0; for (let i = 0; i < plane; i++) s += u8[c * plane + i]; means[c] = s / plane / 255; }
+      const order = Array.from({ length: C }, (_, i) => i).sort((a, b) => means[b] - means[a]);
+      let fired = 0; for (let i = 0; i < u8.length; i++) if (u8[i] > 26) fired++;
+      byName[l.name] = { ...l, u8, H, W, C, means, order, active: fired / u8.length };
+    });
+    return { byName, input: fromB64(trace.input.data) };
+  }
+
+  function explain(s) {
+    const c = s.config || {};
+    switch (s.type) {
+      case "Input": return "Your drawing becomes a 28 × 28 grid of brightness values: 784 numbers between 0 and 1. This is the only thing the network ever sees.";
+      case "Conv2D": return c.filters + " small " + (c.kernel_size || [3, 3]).join(" × ") + " filters slide across the image. Each one is a tiny pattern detector for an edge, a curve or a corner, and it lights up wherever it finds its pattern.";
+      case "MaxPooling2D": return "Looks at every " + (c.pool_size || [2, 2]).join(" × ") + " window and keeps only the strongest response. The map shrinks, so the network cares that a feature is present, not its exact pixel.";
+      case "AveragePooling2D": return "Averages every " + (c.pool_size || [2, 2]).join(" × ") + " window. The map shrinks and small shifts matter less.";
+      case "Flatten": return "Unrolls every feature map into one long list of " + fmt(s.shape[0]) + " numbers, so the dense layers can weigh all the evidence at once.";
+      case "Dense": return s.isOutput
+        ? "Ten output neurons, one per digit. A softmax turns their raw scores into probabilities that add up to 100%. The tallest bar is the network's answer."
+        : (c.units || s.shape[0]) + " neurons, each connected to every value before it. They combine the detected features into bigger ideas, such as a loop sitting on top of a stem.";
+      case "BatchNormalization": return "Rescales the values so every layer works in a comfortable range. It keeps training stable.";
+      default: return "A " + s.type + " layer transforms the values before they reach the next stage.";
+    }
+  }
+  function statsFor(s, ld, source) {
+    const c = s.config || {}, cells = [["Output", s.shape.join(" × ")]];
+    if (s.kind === "input") cells.push(["Pixels", "784"], ["Range", "0 to 1"], ["Source", source || "–"]);
+    else {
+      cells.push(["Parameters", fmt(s.params)]);
+      if (s.type === "Conv2D") cells.push(["Filters", c.filters + " of " + (c.kernel_size || []).join("×")]);
+      else if (/Pool/.test(s.type)) cells.push(["Window", (c.pool_size || []).join("×")]);
+      else if (s.type === "Dense") cells.push(["Activation", c.activation || "linear"]);
+      else cells.push(["Type", s.type]);
+      cells.push(["Firing", ld ? pct(ld.active, 0) : "–"]);
+    }
+    return cells;
+  }
+  function insight(s, ld, tr) {
+    if (!ld || !tr || s.kind === "input") return null;
+    if (s.isOutput) {
+      const t = tr.top_predictions, r = t[1];
+      return "The network is " + pct(tr.confidence) + " sure this is a " + tr.prediction + (r ? ". Runner-up: " + r.digit + " at " + pct(r.probability) + "." : ".");
+    }
+    if (ld.shape.length === 3) { const b = ld.order[0]; return "Strongest response: channel " + (b + 1) + ", at " + pct(ld.means[b], 0) + " of its peak. " + pct(ld.active, 0) + " of all values are firing."; }
+    return pct(ld.active, 0) + " of the " + fmt(ld.u8.length) + " values are firing. Most stay quiet, and a few strong ones carry the decision.";
+  }
+
+  function drawStrokes(ctx, size, strokes, color, pen) {
+    ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = ctx.fillStyle = color; ctx.lineWidth = size * pen;
+    for (const s of strokes) {
+      if (s.length === 1) { ctx.beginPath(); ctx.arc(s[0].x * size, s[0].y * size, size * pen / 2, 0, 6.2832); ctx.fill(); continue; }
+      ctx.beginPath(); ctx.moveTo(s[0].x * size, s[0].y * size);
+      for (let i = 1; i < s.length - 1; i++) ctx.quadraticCurveTo(s[i].x * size, s[i].y * size, (s[i].x + s[i + 1].x) / 2 * size, (s[i].y + s[i + 1].y) / 2 * size);
+      const l = s[s.length - 1]; ctx.lineTo(l.x * size, l.y * size); ctx.stroke();
+    }
+  }
+  function sampleBlob(item, cb) {
+    const u8 = fromB64(item.image), c = document.createElement("canvas"); c.width = c.height = 28;
+    const x = c.getContext("2d"), im = x.createImageData(28, 28);
+    for (let i = 0; i < 784; i++) { im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = u8[i]; im.data[i * 4 + 3] = 255; }
+    x.putImageData(im, 0, 0);
+    const b = document.createElement("canvas"); b.width = b.height = 224;
+    const y = b.getContext("2d"); y.imageSmoothingEnabled = true; y.imageSmoothingQuality = "high"; y.drawImage(c, 0, 0, 224, 224);
+    b.toBlob(cb, "image/png");
+  }
+  function syntheticSeven() {
+    return new Promise((res) => {
+      const c = document.createElement("canvas"); c.width = c.height = 280;
+      const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, 280, 280);
+      x.strokeStyle = "#000"; x.lineWidth = 22; x.lineCap = x.lineJoin = "round";
+      x.beginPath(); x.moveTo(78, 74); x.lineTo(204, 74); x.lineTo(124, 214); x.stroke();
+      c.toBlob(res, "image/png");
+    });
+  }
+
+  /* ====================================================================== */
+  /* 3D scene                                                                */
+  /* ====================================================================== */
+  function tex(cv, linear) {
+    const t = new THREE.CanvasTexture(cv);
+    t.magFilter = linear ? THREE.LinearFilter : THREE.NearestFilter; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
+    if (THREE.SRGBColorSpace) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  function labelSprite(title, sub) {
+    const cv = document.createElement("canvas"); cv.width = 768; cv.height = 176;
+    const x = cv.getContext("2d");
+    x.fillStyle = "#DCE6CF"; x.font = '800 74px "Big Shoulders Display", "Arial Narrow", sans-serif'; x.fillText(title, 0, 84);
+    x.fillStyle = "#8FA597"; x.font = '500 34px Archivo, Arial, sans-serif'; x.fillText(sub, 2, 138);
+    const m = new THREE.SpriteMaterial({ map: tex(cv, true), transparent: true, depthWrite: false });
+    const s = new THREE.Sprite(m); s.scale.set(3.84, 0.88, 1); s.center.set(0, 0);
+    return s;
+  }
+  function stampTexture(digit) {
+    const cv = document.createElement("canvas"); cv.width = cv.height = 512;
+    paintStamp(cv, digit);
+    return cv;
+  }
+  function paintStamp(cv, digit) {
+    const x = cv.getContext("2d"); x.clearRect(0, 0, 512, 512);
+    x.textAlign = "center"; x.textBaseline = "middle"; x.font = '900 470px "Big Shoulders Display", Impact, sans-serif';
+    x.fillStyle = "rgba(255,106,77,.28)"; x.fillText(String(digit), 262, 270);
+    x.fillStyle = "#FF6A4D"; x.fillText(String(digit), 256, 262);
+  }
+
+  class Link {
+    constructor(a, b, K = 56) {
+      this.a = a; this.b = b; this.K = K;
+      this.src = new Float32Array(K * 3); this.dst = new Float32Array(K * 3);
+      this.t = Float32Array.from({ length: K }, () => Math.random());
+      this.sp = Float32Array.from({ length: K }, () => 0.16 + Math.random() * 0.3);
+      const lg = new THREE.BufferGeometry(); this.lpos = new Float32Array(K * 6);
+      lg.setAttribute("position", new THREE.BufferAttribute(this.lpos, 3));
+      this.lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x4A63D8, transparent: true, opacity: 0.16, depthWrite: false }));
+      const pg = new THREE.BufferGeometry(); this.ppos = new Float32Array(K * 3);
+      pg.setAttribute("position", new THREE.BufferAttribute(this.ppos, 3));
+      this.points = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xCFDAFF, size: 0.085, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending }));
+      this.object = new THREE.Group(); this.object.add(this.lines, this.points);
+      this.resample();
+    }
+    resample() {
+      const v = new THREE.Vector3();
+      for (let k = 0; k < this.K; k++) {
+        this.a.sample(v); this.src[k * 3] = v.x; this.src[k * 3 + 1] = v.y; this.src[k * 3 + 2] = v.z;
+        this.b.sample(v); this.dst[k * 3] = v.x; this.dst[k * 3 + 1] = v.y; this.dst[k * 3 + 2] = v.z;
+        for (let j = 0; j < 3; j++) { this.lpos[k * 6 + j] = this.src[k * 3 + j]; this.lpos[k * 6 + 3 + j] = this.dst[k * 3 + j]; }
+      }
+      this.lines.geometry.attributes.position.needsUpdate = true;
+    }
+    update(dt) {
+      for (let k = 0; k < this.K; k++) {
+        this.t[k] += dt * this.sp[k]; if (this.t[k] > 1) this.t[k] -= 1;
+        const e = this.t[k] * this.t[k] * (3 - 2 * this.t[k]);
+        for (let j = 0; j < 3; j++) this.ppos[k * 3 + j] = this.src[k * 3 + j] + (this.dst[k * 3 + j] - this.src[k * 3 + j]) * e;
+      }
+      this.points.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+
+  class NetScene {
+    constructor(container, hooks) {
+      this.container = container; this.hooks = hooks || {};
+      this.layers = []; this.links = []; this.stages = []; this.dec = null;
+      this.stageF = 0; this.ov = 1; this.orbit = { yaw: 0, pitch: 0 };
+      this.pointer = new THREE.Vector2(9, 9); this.client = { x: 0, y: 0 };
+      this.raycaster = new THREE.Raycaster(); this.clock = new THREE.Clock();
+      this.cur = new THREE.Vector3(18, 9, 10); this.look = new THREE.Vector3();
+      this.tPos = new THREE.Vector3(); this.tLook = new THREE.Vector3();
+      this.fresh = true; this.paused = false; this.disposed = false; this.dragging = false; this.hoverTile = null;
+
+      const r = this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+      r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      if (THREE.SRGBColorSpace) r.outputColorSpace = THREE.SRGBColorSpace;
+      r.setClearColor(0x1C2A26, 1);
+      container.appendChild(r.domElement);
+
+      this.scene = new THREE.Scene();
+      this.scene.background = new THREE.Color(0x1C2A26);
+      this.scene.fog = new THREE.Fog(0x1C2A26, 10, 50);
+      this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 220);
+
+      const grid = new THREE.GridHelper(220, 220, 0x365047, 0x2A3C36);
+      grid.position.set(0, -2.7, -20); grid.material.transparent = true; grid.material.opacity = 0.5;
+      this.scene.add(grid);
+
+      const n = 420, pos = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { pos[i * 3] = (Math.random() - 0.5) * 36; pos[i * 3 + 1] = (Math.random() - 0.3) * 14; pos[i * 3 + 2] = 14 - Math.random() * 80; }
+      const dg = new THREE.BufferGeometry(); dg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      this.dust = new THREE.Points(dg, new THREE.PointsMaterial({ color: 0xDCE6CF, size: 0.06, transparent: true, opacity: 0.35, depthWrite: false }));
+      this.scene.add(this.dust);
+
+      this.tick = this.tick.bind(this);
+      this.bind();
+      this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(container);
+      this.resize(); this.tick();
+    }
+
+    resize() {
+      const w = this.container.clientWidth, h = this.container.clientHeight;
+      if (!w || !h) return;
+      this.renderer.setSize(w, h); this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    }
+
+    bind() {
+      const el = this.renderer.domElement; let drag = null;
+      el.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; this.dragging = true; el.setPointerCapture && el.setPointerCapture(e.pointerId); this.container.classList.add("drag"); gsap.killTweensOf(this.orbit); });
+      el.addEventListener("pointermove", (e) => {
+        const r = el.getBoundingClientRect();
+        this.pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+        this.client = { x: e.clientX, y: e.clientY };
+        if (drag) {
+          this.orbit.yaw = clamp(this.orbit.yaw - (e.clientX - drag.x) * 0.006, -1.2, 1.2);
+          this.orbit.pitch = clamp(this.orbit.pitch + (e.clientY - drag.y) * 0.004, -0.6, 0.6);
+          drag.x = e.clientX; drag.y = e.clientY;
+        }
+      });
+      const end = () => {
+        if (!drag) return; drag = null; this.dragging = false; this.container.classList.remove("drag");
+        gsap.to(this.orbit, { yaw: 0, pitch: 0, duration: prefersReduced ? 0.01 : 1.8, delay: prefersReduced ? 0 : 1.2, ease: "power3.inOut" });
+      };
+      el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+      el.addEventListener("pointerleave", () => { this.pointer.set(9, 9); });
+    }
+
+    clearLayers() {
+      [...this.layers.map((l) => l.group), ...this.links.map((k) => k.object)].forEach((o) => {
+        this.scene.remove(o);
+        o.traverse((c) => { if (c.geometry) c.geometry.dispose(); if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } });
+      });
+      this.layers = []; this.links = [];
+    }
+
+    setModel(stages) {
+      this.clearLayers(); this.stages = stages;
+      stages.forEach((s, i) => { const L = this.buildLayer(s, i); this.layers.push(L); this.scene.add(L.group); });
+      for (let i = 0; i < this.layers.length - 1; i++) { const k = new Link(this.layers[i], this.layers[i + 1]); this.links.push(k); this.scene.add(k.object); }
+      this.fresh = true;
+      if (this.dec) this.setTrace(this.dec);
+    }
+
+    buildLayer(s, i) {
+      const g = new THREE.Group(); g.position.z = -i * SP;
+      const L = { stage: s, group: g, tiles: [], mats: [], pop: 0, W: 3.4, H: 3.4, data: null, weights: null, kind: "maps", op: undefined };
+      const fade = (m, base) => { m.transparent = true; m.userData.base = base; m.opacity = base; L.mats.push(m); return m; };
+      const shape = s.shape;
+      if (s.isOutput && shape.length === 1) this.buildBars(L, s, fade);
+      else if (s.kind === "input" || shape.length === 1) this.buildPlane(L, s, fade);
+      else this.buildMaps(L, s, fade);
+
+      const fw = L.W + 0.34, fh = L.H + 0.34;
+      g.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(fw, fh)), fade(new THREE.LineBasicMaterial({ color: 0x6F8CFF }), 0.55)));
+      const lab = labelSprite(s.title, (s.kind === "input" ? "input" : s.name) + "   " + shape.join(" × "));
+      fade(lab.material, 1); lab.position.set(-fw / 2, fh / 2 + 0.12, 0); g.add(lab);
+      return L;
+    }
+
+    buildMaps(L, s, fade) {
+      let H, W, C; const sh = s.shape;
+      if (sh.length === 3) [H, W, C] = sh; else { H = sh[0]; W = sh[1]; C = 1; }
+      const shown = Math.min(C, 16), cols = shown <= 4 ? shown : Math.ceil(Math.sqrt(shown)), rows = Math.ceil(shown / cols);
+      const ts = Math.min(1.1, 3.6 / cols - 0.14), gap = 0.14, pitch = ts + gap;
+      L.W = cols * pitch - gap; L.H = rows * pitch - gap; L.maps = { H, W, C, shown }; L.kind = "maps";
+      const geo = new THREE.PlaneGeometry(ts, ts);
+      for (let k = 0; k < shown; k++) {
+        const cv = document.createElement("canvas"); paintMap(cv, new Uint8Array(W * H), 0, W, H);
+        const t = tex(cv), mesh = new THREE.Mesh(geo, fade(new THREE.MeshBasicMaterial({ map: t }), 1));
+        mesh.position.set((k % cols - (cols - 1) / 2) * pitch, ((rows - 1) / 2 - Math.floor(k / cols)) * pitch, 0);
+        L.group.add(mesh); L.tiles.push({ mesh, cv, tex: t, channel: k, mean: undefined });
+      }
+      L.sample = (out) => {
+        const w = L.weights; let k = 0;
+        if (w) { let tot = 0; for (const v of w) tot += v; let r = Math.random() * tot; for (; k < w.length - 1; k++) { r -= w[k]; if (r <= 0) break; } }
+        else k = (Math.random() * shown) | 0;
+        const t = L.tiles[k];
+        out.set(t.mesh.position.x + (Math.random() - 0.5) * ts, t.mesh.position.y + (Math.random() - 0.5) * ts, 0.02).add(L.group.position);
+      };
+    }
+
+    buildPlane(L, s, fade) {
+      const input = s.kind === "input", n = input ? 784 : s.shape[0], dots = s.type === "Dense";
+      const cols = input ? 28 : Math.ceil(Math.sqrt(n * (dots ? 1.7 : 1))), rows = Math.ceil(n / cols);
+      const Wd = input ? 3.4 : 3.6, Hd = Math.min(4.2, Wd * rows / cols);
+      const cv = document.createElement("canvas");
+      if (dots) paintDots(cv, null, n, cols); else paintMap(cv, new Uint8Array(cols * rows), 0, cols, rows);
+      const t = tex(cv, dots), mesh = new THREE.Mesh(new THREE.PlaneGeometry(Wd, Hd), fade(new THREE.MeshBasicMaterial({ map: t }), 1));
+      L.group.add(mesh); L.W = Wd; L.H = Hd; L.kind = "plane"; L.plane = { cv, tex: t, n, cols, rows, dots };
+      L.sample = (out) => {
+        const u8 = L.data; let i = 0;
+        for (let q = 0; q < 14; q++) { i = (Math.random() * n) | 0; if (!u8 || Math.random() < u8[i] / 255 + 0.015) break; }
+        out.set(((i % cols) + 0.5) / cols * Wd - Wd / 2, Hd / 2 - (Math.floor(i / cols) + 0.5) / rows * Hd, 0.02).add(L.group.position);
+      };
+    }
+
+    buildBars(L, s, fade) {
+      const n = s.shape[0], pitch = 0.44, baseY = -1.5;
+      L.W = n * pitch + 0.2; L.H = 3.4; L.kind = "bars"; L.values = new Array(n).fill(0); L.digit = 0;
+      const geo = new THREE.BoxGeometry(0.26, 1, 0.26); geo.translate(0, 0.5, 0);
+      const bars = [];
+      for (let i = 0; i < n; i++) {
+        const b = new THREE.Mesh(geo, fade(new THREE.MeshBasicMaterial({ color: 0x3D57D6 }), 1));
+        b.position.set((i - (n - 1) / 2) * pitch, baseY, 0); b.scale.y = 0.05; L.group.add(b); bars.push(b);
+      }
+      const dc = document.createElement("canvas"); dc.width = n * 64; dc.height = 64;
+      const dx = dc.getContext("2d"); dx.fillStyle = "#DCE6CF"; dx.font = '800 46px "Big Shoulders Display", Impact, sans-serif'; dx.textAlign = "center"; dx.textBaseline = "middle";
+      for (let i = 0; i < n; i++) dx.fillText(String(i), i * 64 + 32, 34);
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(n * pitch, pitch), fade(new THREE.MeshBasicMaterial({ map: tex(dc, true) }), 1));
+      strip.position.set(0, baseY - 0.3, 0); L.group.add(strip);
+
+      const sc = stampTexture(0), st = tex(sc, true);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: st, transparent: true, opacity: 0, depthWrite: false }));
+      sp.scale.set(3.4, 3.4, 1); sp.position.set(0, 0.1, -0.5); L.group.add(sp);
+      L.stamp = { sprite: sp, cv: sc, tex: st, op: 0 };
+      L.bars = { bars, baseY, n, pitch };
+
+      L.setValues = (vals) => {
+        L.values = vals.slice(); let w = 0; vals.forEach((v, i) => { if (v > vals[w]) w = i; }); L.digit = w;
+        bars.forEach((b, i) => {
+          gsap.to(b.scale, { y: Math.max(0.05, vals[i] * 2.8), duration: prefersReduced ? 0.01 : 1.1, ease: "power3.out", delay: prefersReduced ? 0 : 0.15 + i * 0.03, overwrite: true });
+          b.material.color.set(i === w ? 0xFF5A3D : 0x3D57D6);
+        });
+        paintStamp(sc, w); st.needsUpdate = true;
+      };
+      L.sample = (out) => {
+        let tot = 0; for (const v of L.values) tot += v + 0.01; let r = Math.random() * tot, i = 0;
+        for (; i < n - 1; i++) { r -= L.values[i] + 0.01; if (r <= 0) break; }
+        out.set(bars[i].position.x, baseY + Math.max(0.05, L.values[i] * 2.8), 0).add(L.group.position);
+      };
+    }
+
+    setTrace(dec) {
+      this.dec = dec;
+      this.layers.forEach((L) => {
+        const s = L.stage;
+        if (s.kind === "input") { paintMap(L.plane.cv, dec.input, 0, 28, 28); L.plane.tex.needsUpdate = true; L.data = dec.input; return; }
+        const ld = dec.byName[s.name]; if (!ld) return;
+        if (L.kind === "maps") {
+          const { H, W, shown } = L.maps; L.weights = [];
+          for (let k = 0; k < shown; k++) {
+            const ch = ld.order[k], t = L.tiles[k];
+            paintMap(t.cv, ld.u8, ch * H * W, W, H); t.tex.needsUpdate = true; t.channel = ch; t.mean = ld.means[ch]; L.weights.push(ld.means[ch] + 0.02);
+          }
+        } else if (L.kind === "plane") {
+          const p = L.plane, padded = new Uint8Array(p.cols * p.rows); padded.set(ld.u8.subarray(0, p.n)); L.data = padded;
+          if (p.dots) paintDots(p.cv, padded, p.n, p.cols); else paintMap(p.cv, padded, 0, p.cols, p.rows);
+          p.tex.needsUpdate = true;
+        } else if (L.kind === "bars") L.setValues(ld.values || Array.from(ld.u8, (v) => v / 255));
+      });
+      this.links.forEach((k) => k.resample());
+      this.layers.forEach((L, i) => gsap.fromTo(L, { pop: 1 }, { pop: 0, duration: prefersReduced ? 0.01 : 1, delay: prefersReduced ? 0 : i * 0.07, ease: "power2.out", overwrite: true }));
+    }
+
+    setStage(a) { this.stageF = a; }
+    setOverview(v) { this.ov = clamp(v); }
+    setPaused(p) { this.paused = p; if (!p) this.clock.getDelta(); }
+
+    pose(out, look) {
+      const n = Math.max(1, this.layers.length), mob = isMobile(), e = smooth(this.ov);
+      // Stage pose: oblique view of the active layer, looking slightly off-centre so the wall sits beside the text card.
+      const z = -this.stageF * SP, off = mob ? [1.7, 1.0, 8.6] : [3.4, 1.5, 7.3];
+      const r = Math.hypot(off[0], off[1], off[2]);
+      const az = Math.atan2(off[0], off[2]) + this.orbit.yaw, el = clamp(Math.asin(off[1] / r) + this.orbit.pitch, -0.2, 1.1);
+      const lx = mob ? 0 : -1.6, ly = mob ? -1.25 : 0, lz = z - 0.3;
+      const sPos = new THREE.Vector3(r * Math.cos(el) * Math.sin(az) + lx, r * Math.sin(el) + ly, r * Math.cos(el) * Math.cos(az) + lz);
+      const sLook = new THREE.Vector3(lx, ly, lz);
+      // Overview pose: the whole network seen from the side.
+      const span = (n - 1) * SP, dist = Math.max(18, span * 1.05), zc = -span / 2;
+      const oAz = 0.55 + this.orbit.yaw * 0.5;
+      const oPos = new THREE.Vector3(Math.sin(oAz) * dist * 0.95, dist * (0.3 + this.orbit.pitch * 0.3), zc + Math.cos(oAz) * dist * 0.85);
+      const oLook = new THREE.Vector3(mob ? 0 : -dist * 0.1, mob ? -dist * 0.1 : 0, zc);
+      out.copy(sPos).lerp(oPos, e); look.copy(sLook).lerp(oLook, e);
+    }
+
+    tick() {
+      if (this.disposed) return;
+      this.raf = requestAnimationFrame(this.tick);
+      if (this.paused) return;
+      const dt = Math.min(0.05, this.clock.getDelta()), n = this.layers.length, a = this.stageF, e = smooth(this.ov);
+
+      this.pose(this.tPos, this.tLook);
+      const damp = this.fresh ? 1 : 1 - Math.exp(-dt * 4.5); this.fresh = false;
+      this.cur.lerp(this.tPos, damp); this.look.lerp(this.tLook, damp);
+      this.camera.position.copy(this.cur); this.camera.lookAt(this.look);
+      this.scene.fog.near = lerp(11, 34, e); this.scene.fog.far = lerp(46, 100, e);
+
+      this.layers.forEach((L, i) => {
+        const d = a - i;
+        let op = d > 0 ? Math.max(0, 0.5 - d * 0.4) : Math.max(0.14, 1 + d * 0.26);
+        op = lerp(op, 0.92, e);
+        L.op = L.op === undefined ? op : lerp(L.op, op, 0.12);
+        L.group.visible = L.op > 0.015;
+        L.mats.forEach((m) => { m.opacity = L.op * (m.userData.base === undefined ? 1 : m.userData.base); });
+        L.group.scale.setScalar(1 + L.pop * 0.06);
+        if (L.stamp) {
+          const target = Math.round(a) >= n - 1 && e < 0.5 ? 0.9 : 0;
+          L.stamp.op = lerp(L.stamp.op, target, 0.06); L.stamp.sprite.material.opacity = L.stamp.op * L.op;
+          L.stamp.sprite.scale.setScalar(3.4 * (0.9 + 0.1 * L.stamp.op));
+        }
+      });
+      this.links.forEach((k, i) => {
+        const act = clamp(1 - Math.abs(a - (i + 0.5)) * 1.1);
+        k.lines.material.opacity = lerp(0.05, 0.22, act) * (1 - e * 0.3) + e * 0.1;
+        k.points.material.opacity = (0.15 + 0.75 * act) * (1 - e * 0.35);
+        const vis = this.layers[i].group.visible || this.layers[i + 1].group.visible;
+        k.object.visible = vis; if (vis) k.update(dt);
+      });
+
+      if (n && !this.dragging && Math.abs(this.pointer.x) <= 1 && e < 0.4) this.hover(clamp(Math.round(a), 0, n - 1));
+      else if (this.hoverTile) { this.hoverTile = null; this.hooks.onHover && this.hooks.onHover(null); }
+
+      this.dust.rotation.y += dt * 0.01;
+      this.renderer.render(this.scene, this.camera);
+    }
+
+    hover(idx) {
+      const L = this.layers[idx]; if (!L || !L.tiles.length) return;
+      this.camera.updateMatrixWorld();
+      this.raycaster.setFromCamera(this.pointer, this.camera);
+      const hit = this.raycaster.intersectObjects(L.tiles.map((t) => t.mesh), false)[0];
+      const tile = hit ? L.tiles.find((t) => t.mesh === hit.object) : null;
+      if (tile !== this.hoverTile) {
+        this.hoverTile = tile || null;
+        this.hooks.onHover && this.hooks.onHover(tile ? { title: L.stage.title, channel: tile.channel, mean: tile.mean } : null);
+      }
+      L.tiles.forEach((t) => t.mesh.scale.setScalar(lerp(t.mesh.scale.x, t === tile ? 1.12 : 1, 0.2)));
+      if (tile && this.hooks.onMove) this.hooks.onMove(this.client);
+    }
+
+    dispose() {
+      this.disposed = true; cancelAnimationFrame(this.raf); this.ro.disconnect(); this.clearLayers();
+      this.renderer.dispose(); if (this.renderer.domElement.parentNode) this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+    }
+  }
+
+  /* ====================================================================== */
+  /* React UI                                                                */
+  /* ====================================================================== */
+  function SceneHost({ onScene, onHover, onMove }) {
+    const ref = useRef(null);
+    useEffect(() => {
+      let s = null;
+      try { s = new NetScene(ref.current, { onHover, onMove }); } catch (err) { console.error(err); onScene(null); return undefined; }
+      onScene(s);
+      return () => { s.dispose(); onScene(null); };
+    }, []);
+    return html`<div id="scene" ref=${ref} aria-hidden="true"></div>`;
+  }
+
+  function Thumb({ u8, off, w, h, size }) {
+    const ref = useRef(null);
+    useEffect(() => { if (ref.current && u8) paintMap(ref.current, u8, off, w, h); }, [u8, off, w, h]);
+    return html`<canvas ref=${ref} className="thumb" style=${{ width: size, height: size }}></canvas>`;
+  }
+
+  function Viz({ stage, ld, dec, trace }) {
+    if (stage.kind === "input") return dec ? html`<div className="thumbs"><${Thumb} u8=${dec.input} off=${0} w=${28} h=${28} size=${112} /></div>` : null;
+    if (!ld) return null;
+    if (stage.isOutput) {
+      const vals = ld.values || trace.probabilities, win = trace.prediction;
+      return html`<div className="outbars">${vals.map((v, i) => html`<div key=${i} className=${i === win ? "win" : ""}><b>${i}</b><span className="t"><i style=${{ transform: "scaleX(" + Math.max(0.01, v) + ")" }}></i></span><em>${pct(v)}</em></div>`)}</div>`;
+    }
+    if (ld.shape.length === 3) {
+      return html`<div className="thumbs">${ld.order.slice(0, 8).map((ch) => html`<${Thumb} key=${ch} u8=${ld.u8} off=${ch * ld.H * ld.W} w=${ld.W} h=${ld.H} size=${44} />`)}</div>`;
+    }
+    const top = Array.from(ld.u8).sort((a, b) => b - a).slice(0, 32);
+    return html`<div className="spark" aria-hidden="true">${top.map((v, i) => html`<i key=${i} style=${{ height: Math.max(4, v / 255 * 100) + "%" }}></i>`)}</div>`;
+  }
+
+  function Card({ stage, total, ld, dec, trace, source, on }) {
+    const ref = useRef(null);
+    useEffect(() => {
+      if (prefersReduced || !ref.current) return undefined;
+      const tw = gsap.fromTo(ref.current, { y: 48, opacity: 0 }, { y: 0, opacity: 1, duration: 0.9, ease: "power3.out",
+        scrollTrigger: { trigger: ref.current.parentElement, start: "top 70%", toggleActions: "play none none reverse" } });
+      return () => { if (tw.scrollTrigger) tw.scrollTrigger.kill(); tw.kill(); };
+    }, []);
+    const cells = statsFor(stage, ld, source); if (cells.length % 2) cells.push(["Layer", stage.type]);
+    const note = insight(stage, ld, trace);
+    return html`<article className=${"card sheet" + (on ? " on" : "")} ref=${ref}>
+      <header className="card-top"><span className="idx">${pad2(stage.i + 1)} <i>/ ${pad2(total)}</i></span><span className="code">${stage.kind === "input" ? "input" : stage.name}</span></header>
+      <h2>${stage.title}</h2>
+      <p className="lead">${explain(stage)}</p>
+      <div className="block">${cells.map(([k, v]) => html`<div key=${k}><span className="k">${k}</span><span className="v">${v}</span></div>`)}</div>
+      <${Viz} stage=${stage} ld=${ld} dec=${dec} trace=${trace} />
+      ${note ? html`<p className="note"><b>Notice</b>${note}</p>` : null}
+      ${stage.notes ? html`<p className="aside">${stage.notes.map((n) => n.type + (n.config && n.config.rate !== undefined ? " (rate " + n.config.rate + ")" : "")).join(", ")} follows this layer. It only switches neurons off while training. When reading your digit it does nothing.</p>` : null}
+    </article>`;
+  }
+
+  function Rail({ stages, active, onGo }) {
+    return html`<nav className="rail" aria-label="Layers">${stages.map((s, i) => html`<button key=${i} className=${i === active ? "on" : ""} onClick=${() => onGo(i)} aria-label=${"Go to " + s.title}><span>${s.title}</span></button>`)}</nav>`;
+  }
+
+  function Nav({ trace }) {
+    return html`<header className="nav">
+      <a className="back" href=${HOME} aria-label="Back to the reader"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Digit reader</a>
+      ${trace ? html`<span className="chip"><span className="hide-s">Reading</span><b>${trace.prediction}</b><em>${trace.word}</em><span>${pct(trace.confidence)}</span></span>` : null}
+    </header>`;
+  }
+
+  function Hero({ onStart, onSkip }) {
+    const ref = useRef(null);
+    useEffect(() => {
+      if (prefersReduced || !ref.current) return undefined;
+      const tl = gsap.timeline({ defaults: { ease: "power4.out" }, delay: 0.2 });
+      tl.from(ref.current.querySelectorAll(".ln i"), { yPercent: 115, duration: 1.1, stagger: 0.12 })
+        .from(ref.current.querySelectorAll(".fade"), { opacity: 0, y: 18, duration: 0.8, stagger: 0.1 }, "-=0.6");
+      return () => tl.kill();
+    }, []);
+    return html`<section className="hero" id="hero" ref=${ref}>
+      <h1><span className="ln"><i>Follow one digit</i></span><span className="ln"><i>through the <span className="hot">network.</span></i></span></h1>
+      <p className="fade">Your drawing enters as 784 pixels and leaves as a decision. Scroll to ride the signal through every layer, then see how the model was trained.</p>
+      <div className="cta fade"><button className="btn solid" onClick=${onStart}>Follow the signal</button><button className="btn" onClick=${onSkip}>Training results</button></div>
+      <div className="hint fade"><span className="bar"></span>Drag the 3D view to look around</div>
+    </section>`;
+  }
+
+  function Dock({ gallery, busy, source, onBlob, hasLast, onLast }) {
+    const [open, setOpen] = useState(false);
+    const cv = useRef(null), fileRef = useRef(null), st = useRef({ strokes: [], active: null, timer: 0, size: 0, dpr: 1 });
+    const repaint = () => {
+      const c = cv.current, s = st.current; if (!c || !s.size) return;
+      const x = c.getContext("2d"); x.setTransform(s.dpr, 0, 0, s.dpr, 0, 0); x.clearRect(0, 0, s.size, s.size);
+      drawStrokes(x, s.size, s.strokes, "#213AA0", 0.07);
+    };
+    useEffect(() => {
+      if (!open || !cv.current) return;
+      const w = Math.round(cv.current.getBoundingClientRect().width) || 260, dpr = Math.min(2, devicePixelRatio || 1), s = st.current;
+      s.size = w; s.dpr = dpr; cv.current.width = cv.current.height = Math.round(w * dpr); repaint();
+    }, [open]);
+    const pt = (e) => { const r = cv.current.getBoundingClientRect(); return { x: clamp((e.clientX - r.left) / r.width), y: clamp((e.clientY - r.top) / r.height) }; };
+    const send = () => {
+      const s = st.current; if (!s.strokes.length) return;
+      const c = document.createElement("canvas"); c.width = c.height = 280;
+      const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, 280, 280); drawStrokes(x, 280, s.strokes, "#000", 0.07);
+      c.toBlob((b) => b && onBlob(b, "Your drawing"));
+    };
+    const down = (e) => { const s = st.current; e.currentTarget.setPointerCapture(e.pointerId); clearTimeout(s.timer); s.active = [pt(e)]; s.strokes.push(s.active); repaint(); };
+    const move = (e) => { const s = st.current; if (!s.active) return; s.active.push(pt(e)); repaint(); };
+    const up = () => { const s = st.current; if (!s.active) return; s.active = null; clearTimeout(s.timer); s.timer = setTimeout(send, 450); };
+    const clear = () => { const s = st.current; clearTimeout(s.timer); s.strokes = []; s.active = null; repaint(); };
+    return html`<div className="dock">
+      ${open ? html`<div className="panel sheet" role="dialog" aria-label="Choose an input">
+        <h3>Try another digit</h3><p>Draw here and the network re-reads it after you lift the pen.</p>
+        <canvas id="pad" ref=${cv} onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}></canvas>
+        <div className="row">
+          <button className="btn sm ink" onClick=${clear}>Clear</button>
+          <button className="btn sm ink" onClick=${() => fileRef.current && fileRef.current.click()}>Upload a photo</button>
+          ${hasLast ? html`<button className="btn sm ink" onClick=${onLast}>My last reading</button>` : null}
+        </div>
+        ${gallery && gallery.length ? html`<div className="samples" role="list" aria-label="Test digits">${gallery.map((g) => html`<${SampleChip} key=${g.digit} item=${g} onBlob=${onBlob} />`)}</div>` : null}
+        <p className="label">Reading: ${source || "–"}</p>
+        <input ref=${fileRef} type="file" accept="image/*" hidden onChange=${(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) onBlob(f, "Uploaded photo"); }} />
+      </div>` : null}
+      <button className=${"dock-btn" + (busy ? " busy" : "")} onClick=${() => setOpen((o) => !o)} aria-expanded=${open}><span className="dot"></span>${open ? "Close" : "Try another digit"}</button>
+    </div>`;
+  }
+  function SampleChip({ item, onBlob }) {
+    const ref = useRef(null);
+    useEffect(() => { if (ref.current) { const u8 = fromB64(item.image); paintGray(ref.current, u8); } }, [item]);
+    return html`<button className="sample" role="listitem" aria-label=${"Test digit " + item.digit} onClick=${() => sampleBlob(item, (b) => b && onBlob(b, "Test digit " + item.digit))}><canvas ref=${ref}></canvas></button>`;
+  }
+  function paintGray(cv, u8) {
+    cv.width = cv.height = 28; const x = cv.getContext("2d"), im = x.createImageData(28, 28);
+    for (let i = 0; i < 784; i++) { im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = u8[i]; im.data[i * 4 + 3] = 255; }
+    x.putImageData(im, 0, 0);
+  }
+
+  /* ---------- Training section ---------- */
+  function CountUp({ to, dec = 1, suffix = "" }) {
+    const ref = useRef(null);
+    useEffect(() => {
+      if (!ref.current) return undefined;
+      if (prefersReduced) { ref.current.textContent = to.toFixed(dec) + suffix; return undefined; }
+      const o = { v: 0 };
+      const tw = gsap.to(o, { v: to, duration: 1.6, ease: "power2.out", scrollTrigger: { trigger: ref.current, start: "top 92%", once: true },
+        onUpdate: () => { if (ref.current) ref.current.textContent = o.v.toFixed(dec) + suffix; } });
+      return () => { if (tw.scrollTrigger) tw.scrollTrigger.kill(); tw.kill(); };
+    }, [to]);
+    return html`<span ref=${ref}>${(0).toFixed(dec) + suffix}</span>`;
+  }
+
+  function LineChart({ title, sub, series, isPct }) {
+    const ref = useRef(null), [hi, setHi] = useState(null);
+    const W = 560, H = 270, pl = 46, pr = 14, pt = 14, pb = 28;
+    const live = series.filter((s) => s.values && s.values.length);
+    const n = Math.max(...live.map((s) => s.values.length));
+    const vals = live.flatMap((s) => s.values.filter((v) => v !== null && !Number.isNaN(v)));
+    let lo = Math.min(...vals), top = Math.max(...vals); const padv = (top - lo) * 0.1 || 0.01; lo -= padv; top += padv;
+    if (isPct) top = Math.min(top, 1); else lo = Math.max(0, lo);
+    const X = (i) => pl + (W - pl - pr) * (n <= 1 ? 0 : i / (n - 1)), Y = (v) => pt + (H - pt - pb) * (1 - (v - lo) / (top - lo || 1));
+    const f = (v) => isPct ? pct(v, 2) : v.toFixed(4);
+    useEffect(() => {
+      if (prefersReduced || !ref.current) return undefined;
+      const tws = Array.from(ref.current.querySelectorAll("path.line")).map((p) => {
+        const len = p.getTotalLength ? p.getTotalLength() : 1000; p.style.strokeDasharray = len;
+        return gsap.fromTo(p, { strokeDashoffset: len }, { strokeDashoffset: 0, duration: 1.8, ease: "power2.out", scrollTrigger: { trigger: ref.current, start: "top 85%", once: true } });
+      });
+      return () => tws.forEach((t) => { if (t.scrollTrigger) t.scrollTrigger.kill(); t.kill(); });
+    }, []);
+    const onMove = (e) => {
+      const r = ref.current.getBoundingClientRect(), x = ((e.clientX - r.left) / r.width) * W;
+      setHi(clamp(Math.round(((x - pl) / (W - pl - pr)) * (n - 1)), 0, n - 1));
+    };
+    const idx = hi === null ? n - 1 : hi;
+    const ticks = [0, 1, 2, 3, 4].map((k) => lo + (top - lo) * k / 4);
+    return html`<div className="pane sheet"><h3>${title}</h3><p>${sub}</p>
+      <div className="readout"><b>Epoch ${idx + 1}</b>${live.map((s) => html`<span key=${s.label} className="legend"><i style=${{ background: s.color }}></i>${s.label} <b>${s.values[idx] !== undefined && s.values[idx] !== null ? f(s.values[idx]) : "–"}</b></span>`)}</div>
+      <svg ref=${ref} className="chart" viewBox=${"0 0 " + W + " " + H} onPointerMove=${onMove} onPointerLeave=${() => setHi(null)} role="img" aria-label=${title}>
+        ${ticks.map((t) => html`<g key=${t}><line className="grid" x1=${pl} x2=${W - pr} y1=${Y(t)} y2=${Y(t)} /><text x=${pl - 8} y=${Y(t) + 4} textAnchor="end">${isPct ? (t * 100).toFixed(1) + "%" : t.toFixed(2)}</text></g>`)}
+        ${Array.from({ length: n }, (_, i) => (n <= 12 || i % Math.ceil(n / 10) === 0 || i === n - 1) ? html`<text key=${i} x=${X(i)} y=${H - 8} textAnchor="middle">${i + 1}</text>` : null)}
+        ${live.map((s) => html`<path key=${s.label} className="line" stroke=${s.color} d=${s.values.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" ")} />`)}
+        <line x1=${X(idx)} x2=${X(idx)} y1=${pt} y2=${H - pb} stroke="#16257A" strokeOpacity=".45" />
+        ${live.map((s) => s.values[idx] !== undefined && s.values[idx] !== null ? html`<circle key=${s.label} cx=${X(idx)} cy=${Y(s.values[idx])} r="4.5" fill=${s.color} stroke="#E3EBD6" strokeWidth="2" />` : null)}
+      </svg></div>`;
+  }
+
+  function Confusion({ cm }) {
+    const [h, setH] = useState(null);
+    let offMax = 1; cm.forEach((row, r) => row.forEach((v, c) => { if (r !== c && v > offMax) offMax = v; }));
+    const sums = cm.map((r) => r.reduce((a, b) => a + b, 0));
+    const cells = [html`<div key="corner" className="h"></div>`, ...Array.from({ length: 10 }, (_, c) => html`<div key=${"c" + c} className=${"h" + (h && h.c === c ? " on" : "")}>${c}</div>`)];
+    cm.forEach((row, r) => {
+      cells.push(html`<div key=${"r" + r} className=${"h" + (h && h.r === r ? " on" : "")}>${r}</div>`);
+      row.forEach((v, c) => {
+        const diag = r === c, a = diag ? 0.25 + 0.75 * (v / (sums[r] || 1)) : v ? Math.min(1, 0.2 + 0.8 * Math.log1p(v) / Math.log1p(offMax)) : 0;
+        const bg = diag ? "rgba(33,58,160," + a + ")" : v ? "rgba(213,57,31," + a + ")" : "rgba(33,58,160,.04)";
+        cells.push(html`<div key=${r + "-" + c} className=${"c" + (v ? "" : " z") + (h && h.r === r && h.c === c ? " hl" : "")} style=${{ background: bg }} onPointerEnter=${() => setH({ r, c, v })}>${v || ""}</div>`);
+      });
+    });
+    return html`<div className="pane sheet"><h3>Confusion matrix</h3><p>Each row is the digit that was written. Each column is what the network said. Blue is right, red is a mix-up.</p>
+      <div className="readout">${h ? html`<span>Written <b>${h.r}</b>, read as <b>${h.c}</b>: <b>${fmt(h.v)}</b> ${h.r === h.c ? "correct" : "mix-ups"}</span>` : html`<span>Hover a cell for details</span>`}</div>
+      <div className="cm-wrap" onPointerLeave=${() => setH(null)}><div className="cm">${cells}</div><div className="axis"><span>Network said →</span><span>Rows: digit written</span></div></div></div>`;
+  }
+
+  function PerClass({ items }) {
+    const ref = useRef(null);
+    useEffect(() => {
+      if (prefersReduced || !ref.current) return undefined;
+      const tw = gsap.from(ref.current.querySelectorAll(".t i"), { scaleX: 0, duration: 1, stagger: 0.05, ease: "power3.out", scrollTrigger: { trigger: ref.current, start: "top 85%", once: true } });
+      return () => { if (tw.scrollTrigger) tw.scrollTrigger.kill(); tw.kill(); };
+    }, []);
+    const worst = Math.min(...items.map((i) => i.recall));
+    return html`<div className="pane sheet"><h3>Accuracy per digit</h3><p>How often each digit is recognised. The weakest digit is in red.</p>
+      <div className="pc" ref=${ref}>${items.map((it) => html`<div key=${it.digit} className=${it.recall === worst ? "low" : ""}><b>${it.digit}</b><span className="t"><i style=${{ width: it.recall * 100 + "%" }}></i></span><em>${pct(it.recall)}</em></div>`)}</div></div>`;
+  }
+
+  function KernelTile({ k, max }) {
+    const ref = useRef(null);
+    useEffect(() => {
+      const c = ref.current; if (!c) return;
+      const h = k.length, w = k[0].length; c.width = w; c.height = h;
+      const x = c.getContext("2d"), im = x.createImageData(w, h);
+      for (let r = 0; r < h; r++) for (let q = 0; q < w; q++) {
+        const v = clamp(k[r][q] / max, -1, 1), o = (r * w + q) * 4, a = Math.abs(v);
+        const col = v >= 0 ? [111, 140, 255] : [255, 106, 77];
+        im.data[o] = lerp(30, col[0], a); im.data[o + 1] = lerp(46, col[1], a); im.data[o + 2] = lerp(41, col[2], a); im.data[o + 3] = 255;
+      }
+      x.putImageData(im, 0, 0);
+    }, [k, max]);
+    return html`<canvas ref=${ref}></canvas>`;
+  }
+  function Kernels({ kernels }) {
+    const max = Math.max(...kernels.flat(2).map(Math.abs)) || 1;
+    return html`<div className="pane sheet" style=${{ marginTop: 20 }}><h3>What the first layer learned</h3><p>Each tile is one ${kernels[0][0].length} × ${kernels[0].length} filter. Blue pixels add, red pixels subtract. Together they detect strokes at different angles.</p>
+      <div className="kern">${kernels.map((k, i) => html`<${KernelTile} key=${i} k=${k} max=${max} />`)}</div>
+      <div className="legend2"><span><i style=${{ background: "#6F8CFF" }}></i>Adds evidence</span><span><i style=${{ background: "#FF6A4D" }}></i>Subtracts evidence</span></div></div>`;
+  }
+
+  function MissTile({ item, onPick }) {
+    const ref = useRef(null);
+    useEffect(() => { if (ref.current) paintGray(ref.current, fromB64(item.image)); }, [item]);
+    return html`<button className="miss" onClick=${() => sampleBlob(item, (b) => b && onPick(b, "Misread " + item.true + " as " + item.pred))} aria-label=${"Written " + item.true + ", read as " + item.pred}><canvas ref=${ref}></canvas><span><b>${item.true}</b> read as <b>${item.pred}</b><br />${pct(item.confidence, 0)} sure</span></button>`;
+  }
+
+  function Training({ model, onPick }) {
+    const tr = model.training, ev = model.evaluation, ker = model.kernels, S = tr ? tr.series : {};
+    const stats = [];
+    if (ev) stats.push(html`<div className="stat" key="t"><b><${CountUp} to=${ev.accuracy * 100} dec=${2} suffix="%" /></b><span>Test accuracy on ${fmt(ev.samples)} unseen images</span></div>`);
+    if (S.val_accuracy) stats.push(html`<div className="stat" key="v"><b><${CountUp} to=${Math.max(...S.val_accuracy) * 100} dec=${2} suffix="%" /></b><span>Best validation accuracy</span></div>`);
+    if (tr) stats.push(html`<div className="stat" key="e"><b><${CountUp} to=${tr.epochs} dec=${0} /></b><span>Training epochs</span></div>`);
+    stats.push(html`<div className="stat" key="p"><b><${CountUp} to=${model.total_params} dec=${0} /></b><span>Trainable parameters</span></div>`);
+    return html`<section id="training" className="training">
+      <div className="t-head"><h2>How it learned</h2><p>Every weight in the network started random. Training nudged them, one batch at a time, until the right digit lit up.</p></div>
+      <div className="stats">${stats}</div>
+      ${tr ? html`<div className="grid2">
+        ${S.accuracy ? html`<${LineChart} title="Accuracy" sub="Higher is better. A gap between the lines means overfitting." isPct=${true} series=${[{ label: "Train", color: "#213AA0", values: S.accuracy }, { label: "Validation", color: "#D5391F", values: S.val_accuracy }]} />` : null}
+        ${S.loss ? html`<${LineChart} title="Loss" sub="How wrong the network is. Lower is better." isPct=${false} series=${[{ label: "Train", color: "#213AA0", values: S.loss }, { label: "Validation", color: "#D5391F", values: S.val_loss }]} />` : null}
+      </div>` : null}
+      ${!tr && !ev ? html`<div className="empty"><h3>No training data yet</h3><p>The 3D tour works without it. To add the training curves and test results, run this once next to main.py:</p><pre>python visualize.py --history history.json</pre><p style=${{ marginTop: 12 }}>Save the history from your notebook with <code>json.dump(history.history, open("history.json", "w"))</code>.</p></div>` : null}
+      ${ev ? html`<div className="grid2"><${Confusion} cm=${ev.confusion} /><${PerClass} items=${ev.per_class} /></div>` : null}
+      ${ker ? html`<${Kernels} kernels=${ker} />` : null}
+      ${ev && ev.misclassified && ev.misclassified.length ? html`<div className="pane sheet" style=${{ marginTop: 20 }}><h3>Where it slips</h3><p>The most confident mistakes on the test set. Click one to watch the network misread it.</p><div className="misses">${ev.misclassified.map((m) => html`<${MissTile} key=${m.index} item=${m} onPick=${onPick} />`)}</div></div>` : null}
+      <footer className="foot"><span>Digit reader. A CNN trained on MNIST.</span><a className="btn solid sm" href=${HOME}>Back to the reader</a></footer>
+    </section>`;
+  }
+
+  function Overlay({ err, onRetry }) {
+    return html`<div className="overlay" role="status">
+      ${err ? html`<h2>Can't reach the network</h2><p>${err}</p><div className="row"><button className="btn solid" onClick=${onRetry}>Try again</button><a className="btn" href=${HOME}>Back to the reader</a></div>`
+        : html`<div className="loader" aria-hidden="true">${Array.from({ length: 49 }, (_, i) => html`<i key=${i} style=${{ animationDelay: ((i % 7) * 0.08 + Math.floor(i / 7) * 0.05) + "s" }}></i>`)}</div><p>Loading the network</p>`}
+    </div>`;
+  }
+
+  /* ---------- App ---------- */
+  async function pickInitial(model) {
+    try {
+      const raw = sessionStorage.getItem("d2t:last");
+      if (raw) { const { src, source } = JSON.parse(raw); const blob = await (await fetch(src)).blob(); return { blob, label: "Your last reading" + (source ? " (" + source.toLowerCase() + ")" : "") }; }
+    } catch (_) { /* fall through to a sample */ }
+    if (model.gallery && model.gallery.length) {
+      const item = model.gallery.find((g) => g.digit === 7) || model.gallery[0];
+      return { blob: await new Promise((r) => sampleBlob(item, r)), label: "Test digit " + item.digit };
+    }
+    return { blob: await syntheticSeven(), label: "Built-in example" };
+  }
+
+  function App() {
+    const [model, setModel] = useState(null), [err, setErr] = useState(null);
+    const [trace, setTrace] = useState(null), [busy, setBusy] = useState(false), [source, setSource] = useState("");
+    const [active, setActive] = useState(0), [tip, setTip] = useState(null), [toast, setToast] = useState("");
+    const [sceneOk, setSceneOk] = useState(false), [ready, setReady] = useState(false);
+    const sceneRef = useRef(null), lenisRef = useRef(null), bootRef = useRef(false);
+    const stages = useMemo(() => (model ? buildStages(model) : []), [model]);
+    const dec = useMemo(() => (trace ? decodeTrace(trace) : null), [trace]);
+    const hasLast = useMemo(() => { try { return !!sessionStorage.getItem("d2t:last"); } catch (_) { return false; } }, [trace]);
+
+    const load = useCallback(() => {
+      setErr(null);
+      getJSON("/v1/model").then(setModel).catch((e) => setErr(e instanceof TypeError ? "The API at " + new URL(API_URL).host + " is not responding. Start it with “uvicorn main:app”. If it was idle on a free host, give it a few seconds to wake up." : e.message));
+    }, []);
+    useEffect(load, []);
+
+    const runTrace = useCallback(async (blob, label) => {
+      setBusy(true);
+      try { const d = await postTrace(blob); setTrace(d); setSource(label); }
+      catch (e) { setToast(e instanceof TypeError ? "Lost the connection to the API." : e.message); }
+      finally { setBusy(false); }
+    }, []);
+    useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(""), 4200); return () => clearTimeout(t); }, [toast]);
+
+    const onScene = useCallback((s) => { sceneRef.current = s; setSceneOk(!!s); }, []);
+
+    useEffect(() => {
+      if (!model || !sceneOk || bootRef.current) return;
+      bootRef.current = true;
+      (async () => {
+        if (document.fonts && document.fonts.load) await Promise.race([Promise.all([document.fonts.load('800 74px "Big Shoulders Display"'), document.fonts.load("500 34px Archivo")]), sleep(1500)]);
+        sceneRef.current && sceneRef.current.setModel(stages);
+        const init = await pickInitial(model); await runTrace(init.blob, init.label); setReady(true);
+      })();
+    }, [model, sceneOk]);
+    useEffect(() => { if (model && !sceneOk && !bootRef.current) { /* WebGL missing: the cards still work */ const t = setTimeout(async () => { if (bootRef.current) return; bootRef.current = true; const init = await pickInitial(model); await runTrace(init.blob, init.label); setReady(true); }, 1200); return () => clearTimeout(t); } return undefined; }, [model, sceneOk]);
+    useEffect(() => { if (dec && sceneRef.current) sceneRef.current.setTrace(dec); }, [dec, sceneOk]);
+
+    // Smooth scrolling
+    useEffect(() => {
+      if (prefersReduced) return undefined;
+      const l = new Lenis({ duration: 1.15, smoothWheel: true }); lenisRef.current = l;
+      l.on("scroll", ScrollTrigger.update);
+      const tick = (t) => l.raf(t * 1000); gsap.ticker.add(tick); gsap.ticker.lagSmoothing(0);
+      return () => { gsap.ticker.remove(tick); l.destroy(); lenisRef.current = null; };
+    }, []);
+    const go = useCallback((sel) => {
+      const t = document.querySelector(sel); if (!t) return;
+      if (lenisRef.current) lenisRef.current.scrollTo(t, { duration: 1.5 }); else t.scrollIntoView({ behavior: "smooth" });
+    }, []);
+
+    // Scroll drives the 3D camera
+    useEffect(() => {
+      if (!stages.length) return undefined;
+      const N = stages.length;
+      const ctx = gsap.context(() => {
+        ScrollTrigger.create({ trigger: "#hero", start: "top top", end: "bottom top", scrub: true, onUpdate: (s) => sceneRef.current && sceneRef.current.setOverview(1 - s.progress) });
+        ScrollTrigger.create({ trigger: "#stages", start: "top top", end: "bottom bottom", onUpdate: (s) => {
+          const a = clamp((s.scroll() - s.start) / (innerHeight * STAGE_VH), 0, N - 1);
+          sceneRef.current && sceneRef.current.setStage(a);
+          const idx = Math.round(a); setActive((p) => (p === idx ? p : idx));
+        } });
+        ScrollTrigger.create({ trigger: "#training", start: "top 5%", onToggle: (s) => sceneRef.current && sceneRef.current.setPaused(s.isActive) });
+      });
+      const refresh = () => ScrollTrigger.refresh();
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(refresh);
+      addEventListener("load", refresh);
+      return () => { ctx.revert(); removeEventListener("load", refresh); };
+    }, [stages.length]);
+
+    const onHover = useCallback((info) => setTip(info ? { ...info, x: 0, y: 0 } : null), []);
+    const onMove = useCallback((c) => setTip((t) => (t ? { ...t, x: c.x, y: c.y } : t)), []);
+    const showOverlay = err || !ready;
+
+    return html`<div className="app">
+      <${SceneHost} onScene=${onScene} onHover=${onHover} onMove=${onMove} />
+      <div className="ui">
+        <${Nav} trace=${trace} />
+        <${Hero} onStart=${() => go("#stage-0")} onSkip=${() => go("#training")} />
+        <div id="stages">${stages.map((s) => html`<section key=${s.i} className="stage" id=${"stage-" + s.i}>
+          <${Card} stage=${s} total=${stages.length} ld=${dec && s.kind !== "input" ? dec.byName[s.name] : null} dec=${dec} trace=${trace} source=${source} on=${active === s.i} /></section>`)}</div>
+        ${model ? html`<${Training} model=${model} onPick=${runTrace} />` : null}
+      </div>
+      ${stages.length ? html`<${Rail} stages=${stages} active=${active} onGo=${(i) => go("#stage-" + i)} />` : null}
+      ${model ? html`<${Dock} gallery=${model.gallery} busy=${busy} source=${source} onBlob=${runTrace} hasLast=${hasLast}
+        onLast=${async () => { const init = await pickInitial({ gallery: null }); runTrace(init.blob, init.label); }} />` : null}
+      ${tip ? html`<div className="tip" style=${{ left: Math.min(tip.x + 16, innerWidth - 190), top: tip.y + 16 }}>${tip.title}, channel ${tip.channel + 1}<small>${tip.mean !== undefined ? "Average activation " + pct(tip.mean, 0) : "Run a digit to see activity"}</small></div>` : null}
+      ${toast ? html`<div className="toast" role="alert">${toast}</div>` : null}
+      ${showOverlay ? html`<${Overlay} err=${err} onRetry=${load} />` : null}
+    </div>`;
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")).render(html`<${App} />`);
+})();
+</script>
+</body>
+</html>

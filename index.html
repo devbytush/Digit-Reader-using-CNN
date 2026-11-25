@@ -53,6 +53,16 @@
   .api { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #ffffff26;
     border-radius: 4px; background: transparent; cursor: pointer; font-size: 13px; color: var(--on-desk-muted); }
   .api:hover { border-color: #ffffff55; color: var(--on-desk); }
+  .tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+  .viz { position: relative; display: inline-flex; align-items: center; gap: 9px; padding: 8px 14px; border: 1px solid #DCE6CF;
+    border-radius: 4px; background: #DCE6CF; color: #16257A; font-size: 13px; font-weight: 700; font-stretch: 108%;
+    text-decoration: none; transition: background-color .15s, transform .1s; }
+  .viz:hover { background: #fff; }
+  .viz:active { transform: translateY(1px); }
+  .viz svg { flex: none; }
+  .viz.ready::after { content: ""; position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--stamp); box-shadow: 0 0 0 3px var(--desk); animation: ping 1.8s ease-out infinite; }
+  @keyframes ping { 0% { box-shadow: 0 0 0 3px var(--desk), 0 0 0 3px #D5391F99; } 100% { box-shadow: 0 0 0 3px var(--desk), 0 0 0 12px #D5391F00; } }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #7d8c83; }
   .api[data-s="ok"] .dot { background: #8BD17C; }
   .api[data-s="off"] .dot { background: #F0836F; }
@@ -258,9 +268,15 @@
       <h1>Digit reader</h1>
       <p>Handwritten digit to text</p>
     </div>
-    <button class="api" id="api" type="button" data-s="wait">
-      <span class="dot"></span><span id="apiText">Checking API</span>
-    </button>
+    <div class="tools">
+      <a class="viz" id="viz" href="visualize.html" title="See how the network reads your digit, layer by layer">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+        Visualize
+      </a>
+      <button class="api" id="api" type="button" data-s="wait">
+        <span class="dot"></span><span id="apiText">Checking API</span>
+      </button>
+    </div>
   </header>
 
   <main class="board">
@@ -408,7 +424,7 @@
     rulerX: $("#rulerX"), rulerY: $("#rulerY"),
     bDigit: $("#bDigit"), bWord: $("#bWord"), copy: $("#copy"), bConf: $("#bConf"), bBar: $("#bBar"),
     bRuns: $("#bRuns"), bSource: $("#bSource"), bMs: $("#bMs"),
-    earlier: $("#earlier"), slips: $("#slips"), api: $("#api"), apiText: $("#apiText"),
+    earlier: $("#earlier"), slips: $("#slips"), api: $("#api"), apiText: $("#apiText"), viz: $("#viz"),
   };
 
   const state = {
@@ -1018,9 +1034,26 @@
       top: data.top_predictions, source, ms, warnings: data.warnings || [],
       cells: cells ? Float32Array.from(cells) : new Float32Array(784),
     };
+    rememberForVisualizer(canvas, reading);
     state.history.unshift(reading);
     state.history.length = Math.min(state.history.length, 12);
     showReading(reading, true);
+  }
+
+  /* ---------- Hand-off to the visualizer ---------- */
+  function vizHref() {
+    return "visualize.html" + (API_URL !== location.origin ? "?api=" + encodeURIComponent(API_URL) : "");
+  }
+  function rememberForVisualizer(canvas, reading) {
+    try {
+      const k = Math.min(1, 320 / Math.max(canvas.width, canvas.height));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(canvas.width * k)); c.height = Math.max(1, Math.round(canvas.height * k));
+      c.getContext("2d").drawImage(canvas, 0, 0, c.width, c.height);
+      const src = reading.source === "Drawing" ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", 0.9);
+      sessionStorage.setItem("d2t:last", JSON.stringify({ src, digit: reading.digit, source: reading.source }));
+      el.viz.classList.add("ready");
+    } catch (_) { /* storage can be unavailable or full; the visualizer then uses a sample */ }
   }
 
   /* ---------- API status ---------- */
@@ -1039,10 +1072,12 @@
     let ok = await ping(API_URL);
     if (!ok && !explicitApi && API_URL !== LOCAL_API && await ping(LOCAL_API)) { API_URL = LOCAL_API; ok = true; }
     el.api.title = API_URL;
+    el.viz.href = vizHref();
     setApi(ok);
   }
   el.api.addEventListener("click", checkApi);
   el.api.title = API_URL;
+  el.viz.href = vizHref();
 
   /* ---------- Keyboard ---------- */
   addEventListener("keydown", (e) => {
