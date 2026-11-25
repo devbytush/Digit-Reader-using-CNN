@@ -1,6 +1,15 @@
 <div align="center">
 
+<<<<<<< HEAD
 <img src="assets/banner.svg" alt="Digit Reader: handwritten digit to text" width="100%">
+=======
+
+https://digit-reader-using-cnn.onrender.com
+A FastAPI app that accepts a photo of one handwritten digit, preprocesses it for
+the included MNIST CNN, and returns the predicted digit with class probabilities.
+The browser page supports both taking a camera photo and choosing an image from
+the gallery.
+>>>>>>> ae464cafb0da870ddbf81c22820c27dd3ea44221
 
 <br>
 
