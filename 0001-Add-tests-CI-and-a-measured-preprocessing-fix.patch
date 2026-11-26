@@ -1,0 +1,1924 @@
+From 940ab19a15d206019c5f32c1571571e799a5e21d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 26 Nov 2026 07:07:48 +0000
+Subject: [PATCH] Add tests, CI and a measured preprocessing fix
+
+- Extract preprocessing into digitreader/preprocessing.py (bit-identical output verified)
+- Add 31 tests, ruff config, requirements-dev, GitHub Actions CI
+- Add eval/pipeline_eval.py and results; make robust preprocessing the default (D2T_ROBUST_PREPROCESSING=false to roll back)
+- Harden WebSocket (origin + size) and base64 (size before decode); fix Keras extractor warning
+- Resolve README merge-conflict markers; document /react build requirement
+---
+ .github/workflows/ci.yml                 |  42 ++
+ README.md                                |  69 ++-
+ digitreader/__init__.py                  |   1 +
+ digitreader/preprocessing.py             | 176 ++++++
+ eval/pipeline_eval.py                    | 239 ++++++++
+ eval/results/pipeline_eval_variants.json | 748 +++++++++++++++++++++++
+ main.py                                  | 140 ++---
+ pyproject.toml                           |  11 +
+ requirements-dev.txt                     |   4 +
+ requirements.txt                         |   3 +-
+ tests/conftest.py                        |  49 ++
+ tests/test_api.py                        | 101 +++
+ tests/test_preprocessing.py              | 107 ++++
+ visualize.py                             |   8 +-
+ 14 files changed, 1593 insertions(+), 105 deletions(-)
+ create mode 100644 .github/workflows/ci.yml
+ create mode 100644 digitreader/__init__.py
+ create mode 100644 digitreader/preprocessing.py
+ create mode 100644 eval/pipeline_eval.py
+ create mode 100644 eval/results/pipeline_eval_variants.json
+ create mode 100644 pyproject.toml
+ create mode 100644 requirements-dev.txt
+ create mode 100644 tests/conftest.py
+ create mode 100644 tests/test_api.py
+ create mode 100644 tests/test_preprocessing.py
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..1e5ac52
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,42 @@
++name: CI
++
++on:
++  push:
++    branches: [main]
++  pull_request:
++
++permissions:
++  contents: read
++
++jobs:
++  backend:
++    name: Backend (lint + tests)
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++          cache: pip
++          cache-dependency-path: requirements*.txt
++      - run: pip install -r requirements-dev.txt
++      - run: ruff check .
++      - run: pytest -q
++        env:
++          TF_CPP_MIN_LOG_LEVEL: "3"
++
++  frontend:
++    name: Frontend (build)
++    runs-on: ubuntu-latest
++    defaults:
++      run:
++        working-directory: frontend
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 20
++          cache: npm
++          cache-dependency-path: frontend/package-lock.json
++      - run: npm ci
++      - run: npm run build
+diff --git a/README.md b/README.md
+index 6cae5f1..f6b8d4f 100644
+--- a/README.md
++++ b/README.md
+@@ -1,15 +1,6 @@
+ <div align="center">
+ 
+-<<<<<<< HEAD
+ <img src="assets/banner.svg" alt="Digit Reader: handwritten digit to text" width="100%">
+-=======
+-
+-https://digit-reader-using-cnn.onrender.com
+-A FastAPI app that accepts a photo of one handwritten digit, preprocesses it for
+-the included MNIST CNN, and returns the predicted digit with class probabilities.
+-The browser page supports both taking a camera photo and choosing an image from
+-the gallery.
+->>>>>>> ae464cafb0da870ddbf81c22820c27dd3ea44221
+ 
+ <br>
+ 
+@@ -202,6 +193,7 @@ Settings can be overridden with environment variables prefixed `D2T_`:
+ | `D2T_MAX_UPLOAD_BYTES` | `10485760` | Maximum upload size |
+ | `D2T_MAX_IMAGE_PIXELS` | `20000000` | Maximum image size in pixels |
+ | `D2T_LOW_CONFIDENCE_THRESHOLD` | `0.70` | Below this, a warning is returned |
++| `D2T_ROBUST_PREPROCESSING` | `true` | Flatten uneven lighting, smooth noise and stretch contrast before locating the digit. Set `false` to restore the original pipeline (see [Pipeline accuracy](#pipeline-accuracy)) |
+ 
+ ## Deploy on Render
+ 
+@@ -212,6 +204,64 @@ Settings can be overridden with environment variables prefixed `D2T_`:
+ 
+ Because the frontend is served by the same app, it automatically calls the API on its own origin.
+ 
++> **React app (`/react`).** `frontend/dist` is git-ignored, so `/react` only works if the build step runs
++> (`cd frontend && npm ci && npm run build`). The command above installs Python dependencies only, so on a plain
++> Python build `/react` returns 404 while `/` and `/visualize` still work. Add the frontend build to your build
++> command if your build image provides Node.
++
++## Development
++
++```bash
++pip install -r requirements-dev.txt
++ruff check .          # lint
++pytest -q             # unit + API tests (loads the real model; about 10 s)
++```
++
++CI (`.github/workflows/ci.yml`) runs the same checks plus the frontend build on every push and pull request.
++Image preprocessing lives in `digitreader/preprocessing.py`, a pure module with no web-framework imports.
++
++## Pipeline accuracy
++
++The 98.96% in `exported_model/training_summary.json` is accuracy on clean 28x28 MNIST. Real uploads are photos, so
++`eval/pipeline_eval.py` renders MNIST **test** digits as simulated photos under 13 conditions, runs them through the real
++preprocessing and model, and compares pipeline variants on identical images (paired, with exact McNemar tests).
++
++```bash
++python eval/pipeline_eval.py --mnist-npz path/to/mnist_test.npz --n 1000
++```
++
++Results (1000 images per condition; raw data in `eval/results/pipeline_eval_variants.json`):
++
++| Condition | Original pipeline | New default (`robust` + stretch) | Change |
++|---|---|---|---|
++| clean photo | 98.4% | 98.1% | no significant change |
++| light on dark | 98.2% | 98.1% | no significant change |
++| faint ink | 97.2% | 98.2% | no significant change |
++| very faint ink | 96.5% | 98.2% | significant gain |
++| blur | 98.4% | 98.3% | no significant change |
++| noise | 80.9% | 98.4% | significant gain |
++| rotated | 98.0% | 97.9% | no significant change |
++| shadow | 75.9% | 92.8% | significant gain |
++| small digit | 95.2% | 97.9% | significant gain |
++| thick marker | 96.8% | 96.7% | no significant change |
++| thin pen | 97.5% | 97.5% | no significant change |
++| jpeg q30 | 98.3% | 98.4% | no significant change |
++| combined hard | 13.8% | 97.9% | significant gain |
++
++"Significant" means an exact McNemar p < 0.01, unadjusted for the 13 comparisons. Faint ink (p = 0.013) improves by a
++similar amount but falls just outside that cut-off.
++
++The original pipeline located the digit from per-column foreground occupancy under a single global Otsu threshold, so
++sensor noise and lighting gradients broke it. The new default flattens the page background, smooths noise *only for
++segmentation*, and stretches stroke contrast; the pixels that reach the model still come from the original image and
++the final tensor is unchanged in form (28x28, 0-1, white on black, 20 px box, centred by centre of mass).
++
++**Read this as a relative comparison, not a field accuracy guarantee.** The photos are simulated, the digits are MNIST
++test digits, there is one random seed, and with 1000 images per condition each 95% interval is about +/-1 point near 98% accuracy and up to
+++/-2.7 points near 76%. On clean photos the new default flipped 3 images the wrong way and none the right way (p = 0.25, not
++distinguishable from chance), so a cost of up to about 0.3 points there cannot be ruled out. Real phone photos should be
++evaluated before quoting a field number.
++
+ ## Tips for the best results
+ 
+ - Write **one digit** in dark ink on plain paper.
+@@ -230,6 +280,7 @@ Because the frontend is served by the same app, it automatically calls the API o
+ - [ ] Letter and symbol recognition (EMNIST)
+ - [ ] Test-time augmentation for tougher photos
+ - [ ] Dockerfile for one-command deployment
++- [ ] Evaluate the pipeline on real phone photos (the current harness is simulated)
+ 
+ ## Documentation
+ 
+diff --git a/digitreader/__init__.py b/digitreader/__init__.py
+new file mode 100644
+index 0000000..5dcbb7d
+--- /dev/null
++++ b/digitreader/__init__.py
+@@ -0,0 +1 @@
++"""Framework-free building blocks for the Digit Reader (preprocessing, no FastAPI imports)."""
+diff --git a/digitreader/preprocessing.py b/digitreader/preprocessing.py
+new file mode 100644
+index 0000000..5f2032f
+--- /dev/null
++++ b/digitreader/preprocessing.py
+@@ -0,0 +1,176 @@
++"""Photo -> MNIST-style 28x28 tensor.
++
++Pure functions with no web-framework dependency, so they can be unit-tested and
++evaluated offline (see ``eval/pipeline_eval.py``). The contract with the model is
++documented in ``exported_model/preprocessing_config.json``: float32, shape
++(1, 28, 28, 1), values in [0, 1], bright digit on a dark background, digit fitted
++to a 20x20 box and centred by centre of mass (the way MNIST was prepared).
++"""
++
++from __future__ import annotations
++
++from io import BytesIO
++
++import numpy as np
++from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
++
++DEFAULT_MAX_IMAGE_PIXELS = 20_000_000
++DEFAULT_MIN_INK_RATIO = 0.001
++
++
++class PreprocessError(Exception):
++    """A user-facing image problem. ``status_code`` mirrors the HTTP status the API returns."""
++
++    def __init__(self, status_code: int, detail: str) -> None:
++        super().__init__(detail)
++        self.status_code = status_code
++        self.detail = detail
++
++
++def otsu_threshold(gray: np.ndarray) -> int:
++    histogram = np.bincount(gray.ravel(), minlength=256).astype(np.float64)
++    probabilities = histogram / gray.size
++    weight_bg = np.cumsum(probabilities)
++    cumulative_mean = np.cumsum(probabilities * np.arange(256))
++    denominator = weight_bg * (1.0 - weight_bg)
++    variance = np.zeros(256)
++    valid = denominator > 0
++    variance[valid] = (
++        (cumulative_mean[-1] * weight_bg[valid] - cumulative_mean[valid]) ** 2
++        / denominator[valid]
++    )
++    return int(np.argmax(variance))
++
++
++def decode_image(contents: bytes, max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS) -> np.ndarray:
++    """Bytes -> upright grayscale uint8 array (transparency flattened onto white)."""
++    try:
++        with Image.open(BytesIO(contents)) as source:
++            if source.width * source.height > max_pixels:
++                raise PreprocessError(413, "Image is too large. Use an image under 20 megapixels.")
++            oriented = ImageOps.exif_transpose(source).convert("RGBA")
++    except PreprocessError:
++        raise
++    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
++        raise PreprocessError(415, "The upload is not a supported or readable image.") from exc
++
++    background = Image.new("RGBA", oriented.size, (255, 255, 255, 255))
++    return np.asarray(Image.alpha_composite(background, oriented).convert("L"), dtype=np.uint8)
++
++
++def to_light_on_dark(gray: np.ndarray) -> np.ndarray:
++    """MNIST is bright strokes on a dark background; invert dark-on-light photos."""
++    border = np.concatenate((gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]))
++    return 255 - gray if float(np.median(border)) >= 127 else gray
++
++
++def column_runs(mask: np.ndarray) -> list[tuple[int, int]]:
++    """Horizontal runs of columns containing foreground, split by empty columns."""
++    occupied = np.concatenate(([0], mask.any(axis=0).astype(np.int8), [0]))
++    edges = np.diff(occupied)
++    return list(zip(np.flatnonzero(edges == 1).tolist(), np.flatnonzero(edges == -1).tolist()))
++
++
++def center_on_canvas(glyph: np.ndarray) -> np.ndarray:
++    """Fit into 20x20, place on 28x28, then centre by centre of mass (MNIST style)."""
++    height, width = glyph.shape
++    scale = 20.0 / max(height, width)
++    resized = Image.fromarray(glyph).resize(
++        (max(1, round(width * scale)), max(1, round(height * scale))),
++        Image.Resampling.LANCZOS,
++    )
++    canvas = np.zeros((28, 28), dtype=np.float32)
++    top, left = (28 - resized.height) // 2, (28 - resized.width) // 2
++    canvas[top : top + resized.height, left : left + resized.width] = np.asarray(
++        resized, dtype=np.float32
++    )
++
++    total = canvas.sum()
++    if total > 0:
++        ys, xs = np.indices(canvas.shape)
++        shift_y = int(round(13.5 - (ys * canvas).sum() / total))
++        shift_x = int(round(13.5 - (xs * canvas).sum() / total))
++        canvas = np.roll(canvas, (shift_y, shift_x), axis=(0, 1))
++    return canvas / 255.0
++
++
++def flatten_background(gray: np.ndarray) -> np.ndarray:
++    """Remove slowly varying illumination from a light-on-dark image (stroke bright, page dark).
++
++    The page level is estimated on a small copy with a minimum filter wider than any stroke,
++    then smoothed and subtracted, so a shadow gradient no longer masquerades as ink.
++    """
++    height, width = gray.shape
++    scale = min(1.0, 128.0 / max(height, width))
++    small = Image.fromarray(gray).resize(
++        (max(1, round(width * scale)), max(1, round(height * scale))), Image.Resampling.BILINEAR
++    )
++    window = max(3, round(0.18 * max(small.size)) | 1)  # odd, comfortably wider than a stroke
++    page = small.filter(ImageFilter.MinFilter(window)).filter(ImageFilter.GaussianBlur(window / 3))
++    page = np.asarray(page.resize((width, height), Image.Resampling.BILINEAR), dtype=np.int16)
++    return np.clip(gray.astype(np.int16) - page, 0, 255).astype(np.uint8)
++
++
++def smooth_for_segmentation(gray: np.ndarray) -> np.ndarray:
++    """Light blur (scaled to image size) so isolated noise specks do not become 'ink'."""
++    sigma = max(1.0, 0.004 * max(gray.shape))
++    return np.asarray(Image.fromarray(gray).filter(ImageFilter.GaussianBlur(sigma)), dtype=np.uint8)
++
++
++def prepare_from_gray(
++    gray: np.ndarray,
++    *,
++    min_ink_ratio: float = DEFAULT_MIN_INK_RATIO,
++    stretch_contrast: bool = False,
++    robust: bool = False,
++) -> np.ndarray:
++    """Upright grayscale uint8 image -> float32 tensor of shape (1, 28, 28, 1).
++
++    ``stretch_contrast`` rescales the stroke so its brightest pixel is 255, as in MNIST.
++    It is off by default (the production behaviour); the evaluation harness measures
++    whether turning it on helps. ``robust`` flattens uneven lighting and smooths noise before
++    locating the digit; the pixels that reach the model still come from the original image.
++    """
++    gray = to_light_on_dark(gray)
++    if robust:
++        gray = flatten_background(gray)
++        segmentation = smooth_for_segmentation(gray)
++    else:
++        segmentation = gray
++    foreground = segmentation > otsu_threshold(segmentation)
++
++    runs = column_runs(foreground)
++    if not runs:
++        raise PreprocessError(422, "No handwritten digit was found. Try a clearer, higher-contrast photo.")
++
++    # Camera shots often contain stray specks/shadows: keep only the run with the most ink.
++    left, right = max(runs, key=lambda r: int(foreground[:, r[0] : r[1]].sum()))
++    rows = np.flatnonzero(foreground[:, left:right].any(axis=1))
++    top, bottom = int(rows[0]), int(rows[-1]) + 1
++    mask = foreground[top:bottom, left:right]
++
++    if mask.sum() < foreground.size * min_ink_ratio:
++        raise PreprocessError(422, "The digit is too small or faint. Move closer and try again.")
++
++    # Keep original stroke intensity for smoother, MNIST-like edges.
++    glyph = np.where(mask, gray[top:bottom, left:right], 0).astype(np.uint8)
++    if stretch_contrast and glyph.max() > 0:
++        glyph = np.rint(glyph.astype(np.float32) * (255.0 / glyph.max())).astype(np.uint8)
++    return center_on_canvas(glyph).reshape(1, 28, 28, 1)
++
++
++def prepare_tensor(
++    contents: bytes,
++    *,
++    max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
++    min_ink_ratio: float = DEFAULT_MIN_INK_RATIO,
++    stretch_contrast: bool = False,
++    robust: bool = False,
++) -> np.ndarray:
++    """Encoded image bytes -> model-ready tensor. Raises :class:`PreprocessError`."""
++    return prepare_from_gray(
++        decode_image(contents, max_pixels),
++        min_ink_ratio=min_ink_ratio,
++        stretch_contrast=stretch_contrast,
++        robust=robust,
++    )
+diff --git a/eval/pipeline_eval.py b/eval/pipeline_eval.py
+new file mode 100644
+index 0000000..8bad4d6
+--- /dev/null
++++ b/eval/pipeline_eval.py
+@@ -0,0 +1,239 @@
++#!/usr/bin/env python3
++"""Measure end-to-end accuracy of the *camera pipeline*, not just the bare CNN.
++
++The 98.96% in exported_model/training_summary.json is accuracy on clean 28x28 MNIST. Real
++users upload photos, so this harness renders MNIST *test* digits as simulated photos
++(ink on paper, blur, noise, shadows, rotation, faint or thick strokes, JPEG, ...), pushes
++them through ``digitreader.preprocessing`` and the real model, and reports accuracy per
++condition with Wilson 95% confidence intervals.
++
++It also compares preprocessing variants on the *same* rendered images (paired design) and
++reports an exact McNemar p-value, so a change is only adopted when the data supports it.
++
++    python eval/pipeline_eval.py --mnist-npz data/mnist_test.npz --n 2000
++
++Limits, stated plainly: the photos are simulated, not real phone captures, and the digits
++are MNIST test digits (the model never trained on them). Treat results as a relative
++comparison between pipeline variants and a stress test, not as a field accuracy guarantee.
++"""
++
++from __future__ import annotations
++
++import argparse
++import io
++import json
++import math
++import os
++import time
++import zlib
++from dataclasses import dataclass
++from pathlib import Path
++
++import numpy as np
++from PIL import Image, ImageFilter
++
++os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
++
++import sys  # noqa: E402
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++from digitreader.preprocessing import PreprocessError, prepare_from_gray, prepare_tensor  # noqa: E402
++
++
++@dataclass(frozen=True)
++class Condition:
++    name: str
++    description: str
++    size: tuple[int, int] = (120, 260)  # digit side length in pixels, on a 400 px canvas
++    rotate: float = 0.0  # max abs rotation in degrees
++    ink: float = 1.0  # stroke contrast: 1 = near-black ink, 0.3 = faint pencil
++    blur: float = 0.0  # gaussian radius
++    noise: float = 0.0  # gaussian sigma (grey levels)
++    shadow: float = 0.0  # illumination gradient strength across the page
++    thicken: int = 0  # MaxFilter size (thick marker); 0 = off
++    thin: int = 0  # MinFilter size (thin pen); 0 = off
++    jpeg: int = 0  # JPEG quality; 0 = off (exercises the decode path too)
++    light_on_dark: bool = False  # canvas-style drawing (white stroke on black)
++
++
++CONDITIONS = [
++    Condition("clean_photo", "dark ink on white paper, no degradation"),
++    Condition("light_on_dark", "white stroke on black (drawing canvas)", light_on_dark=True),
++    Condition("faint_ink", "pencil-like, 35% contrast", ink=0.35),
++    Condition("very_faint_ink", "20% contrast", ink=0.20),
++    Condition("blur", "defocus blur, radius 3", blur=3.0),
++    Condition("noise", "sensor noise, sigma 20", noise=20.0),
++    Condition("rotated", "rotated up to +/-15 degrees", rotate=15.0),
++    Condition("shadow", "uneven lighting, 50% gradient", shadow=0.5),
++    Condition("small_digit", "digit only 40-70 px on a 400 px frame", size=(40, 70)),
++    Condition("thick_marker", "thick strokes", thicken=11),
++    Condition("thin_pen", "thin strokes", thin=5),
++    Condition("jpeg_q30", "heavy JPEG compression, quality 30", jpeg=30),
++    Condition(
++        "combined_hard",
++        "faint+blur+noise+shadow+rotation",
++        ink=0.5,
++        blur=2.0,
++        noise=12.0,
++        shadow=0.35,
++        rotate=10.0,
++    ),
++]
++
++
++def render(glyph: np.ndarray, cond: Condition, rng: np.random.Generator, canvas: int = 400) -> np.ndarray:
++    """MNIST 28x28 uint8 -> simulated photo, upright grayscale uint8."""
++    side = int(rng.integers(cond.size[0], cond.size[1] + 1))
++    big = Image.fromarray(glyph).resize((side, side), Image.Resampling.BICUBIC)
++    if cond.thicken:
++        big = big.filter(ImageFilter.MaxFilter(cond.thicken))
++    if cond.thin:
++        big = big.filter(ImageFilter.MinFilter(cond.thin))
++    if cond.rotate:
++        big = big.rotate(float(rng.uniform(-cond.rotate, cond.rotate)), resample=Image.Resampling.BICUBIC)
++    frame = np.zeros((canvas, canvas), dtype=np.float32)
++    top = int(rng.integers(0, canvas - side + 1))
++    left = int(rng.integers(0, canvas - side + 1))
++    frame[top : top + side, left : left + side] = np.asarray(big, dtype=np.float32) / 255.0
++
++    if cond.light_on_dark:
++        photo = frame * 255.0 * cond.ink
++    else:
++        paper = float(rng.uniform(205, 245))
++        photo = paper - frame * cond.ink * (paper - 25.0)
++    if cond.shadow:
++        angle = float(rng.uniform(0, 2 * math.pi))
++        ys, xs = np.mgrid[0:canvas, 0:canvas] / canvas
++        ramp = (xs * math.cos(angle) + ys * math.sin(angle) + 1) / 2
++        photo = photo * (1.0 - cond.shadow * ramp)
++    image = Image.fromarray(np.clip(photo, 0, 255).astype(np.uint8))
++    if cond.blur:
++        image = image.filter(ImageFilter.GaussianBlur(cond.blur))
++    out = np.asarray(image, dtype=np.float32)
++    if cond.noise:
++        out = out + rng.normal(0.0, cond.noise, out.shape)
++    return np.clip(out, 0, 255).astype(np.uint8)
++
++
++VARIANTS: dict[str, dict] = {
++    "current": {},
++    "stretch": {"stretch_contrast": True},
++    "robust": {"robust": True},
++    "robust+stretch": {"robust": True, "stretch_contrast": True},
++}
++
++
++def to_tensor(photo: np.ndarray, cond: Condition, options: dict) -> np.ndarray | None:
++    """Run the real pipeline; None means the API would have rejected the image (HTTP 422/415)."""
++    try:
++        if cond.jpeg:
++            buffer = io.BytesIO()
++            Image.fromarray(photo).save(buffer, format="JPEG", quality=cond.jpeg)
++            return prepare_tensor(buffer.getvalue(), **options)
++        return prepare_from_gray(photo, **options)
++    except PreprocessError:
++        return None
++
++
++def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
++    if n == 0:
++        return 0.0, 0.0
++    p = k / n
++    denom = 1 + z * z / n
++    centre = (p + z * z / (2 * n)) / denom
++    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
++    return centre - half, centre + half
++
++
++def mcnemar_exact(b: int, c: int) -> float:
++    """Two-sided exact p-value for discordant pairs b (A right, B wrong) and c (A wrong, B right)."""
++    n = b + c
++    if n == 0:
++        return 1.0
++    tail = sum(math.comb(n, i) for i in range(0, min(b, c) + 1)) / 2**n
++    return min(1.0, 2 * tail)
++
++
++def predict(model, tensors: list[np.ndarray | None]) -> np.ndarray:
++    """Argmax per image; -1 where the pipeline rejected the photo."""
++    preds = np.full(len(tensors), -1, dtype=int)
++    ok = [i for i, t in enumerate(tensors) if t is not None]
++    if ok:
++        batch = np.concatenate([tensors[i] for i in ok], axis=0)
++        preds[ok] = model.predict(batch, batch_size=512, verbose=0).argmax(axis=1)
++    return preds
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument("--mnist-npz", type=Path, required=True, help="npz with x_test (N,28,28) uint8 and y_test")
++    parser.add_argument("--model", type=Path, default=ROOT / "exported_model" / "mnist_cnn.keras")
++    parser.add_argument("--n", type=int, default=2000, help="test images per condition")
++    parser.add_argument("--seed", type=int, default=42)
++    parser.add_argument("--out-json", type=Path)
++    args = parser.parse_args()
++
++    import keras
++
++    model = keras.models.load_model(args.model)
++    with np.load(args.mnist_npz) as data:
++        x_test, y_test = data["x_test"], data["y_test"].astype(int)
++    pick = np.random.default_rng(args.seed).permutation(len(y_test))[: args.n]
++    x, y = x_test[pick], y_test[pick]
++
++    direct = model.predict((x.astype("float32") / 255.0)[..., None], batch_size=512, verbose=0).argmax(axis=1)
++    direct_acc = float((direct == y).mean())
++    print(f"\nBare CNN on clean 28x28 ({args.n} images): {direct_acc:.4f}\n")
++
++    results = []
++    started = time.time()
++    for cond in CONDITIONS:
++        rng = np.random.default_rng([args.seed, zlib.crc32(cond.name.encode())])
++        photos = [render(g, cond, rng) for g in x]
++        row: dict = {"condition": cond.name, "description": cond.description}
++        correct: dict[str, np.ndarray] = {}
++        for variant, options in VARIANTS.items():
++            preds = predict(model, [to_tensor(p, cond, options) for p in photos])
++            ok = preds == y
++            accepted = int((preds != -1).sum())
++            lo, hi = wilson(int(ok.sum()), len(y))
++            row[variant] = {
++                "accuracy": float(ok.mean()),
++                "ci95": [lo, hi],
++                "rejected": int((preds == -1).sum()),
++                "accuracy_on_accepted": float(ok.sum() / accepted) if accepted else None,
++            }
++            correct[variant] = ok
++        row["paired_vs_current"] = {}
++        for variant in list(VARIANTS)[1:]:
++            b = int((correct["current"] & ~correct[variant]).sum())
++            c = int((~correct["current"] & correct[variant]).sum())
++            row["paired_vs_current"][variant] = {
++                "only_current_right": b,
++                "only_variant_right": c,
++                "mcnemar_p": mcnemar_exact(b, c),
++            }
++        results.append(row)
++        cells = []
++        for variant in VARIANTS:
++            cell = f"{row[variant]['accuracy']:.3f}"
++            if variant != "current":
++                pair = row["paired_vs_current"][variant]
++                mark = ""
++                if pair["mcnemar_p"] < 0.01:
++                    mark = "+" if pair["only_variant_right"] > pair["only_current_right"] else "-"
++                cell += mark
++            cells.append(cell)
++        print(f"{cond.name:<16} " + "  ".join(f"{v}={c}" for v, c in zip(VARIANTS, cells)), flush=True)
++
++    print(f"\nDone in {time.time() - started:.0f}s")
++    if args.out_json:
++        args.out_json.parent.mkdir(parents=True, exist_ok=True)
++        payload = {"n": args.n, "seed": args.seed, "direct_28x28_accuracy": direct_acc, "results": results}
++        args.out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
++        print(f"Wrote {args.out_json}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/eval/results/pipeline_eval_variants.json b/eval/results/pipeline_eval_variants.json
+new file mode 100644
+index 0000000..67e31ef
+--- /dev/null
++++ b/eval/results/pipeline_eval_variants.json
+@@ -0,0 +1,748 @@
++{
++  "n": 1000,
++  "seed": 42,
++  "direct_28x28_accuracy": 0.986,
++  "results": [
++    {
++      "condition": "clean_photo",
++      "description": "dark ink on white paper, no degradation",
++      "current": {
++        "accuracy": 0.984,
++        "ci95": [
++          0.9741677180358003,
++          0.9901278441325737
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.984
++      },
++      "stretch": {
++        "accuracy": 0.982,
++        "ci95": [
++          0.9717265156214581,
++          0.9885843541412616
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.982
++      },
++      "robust": {
++        "accuracy": 0.981,
++        "ci95": [
++          0.9705153112972965,
++          0.9878032122625958
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.981
++      },
++      "robust+stretch": {
++        "accuracy": 0.981,
++        "ci95": [
++          0.9705153112972965,
++          0.9878032122625958
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.981
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 2,
++          "only_variant_right": 0,
++          "mcnemar_p": 0.5
++        },
++        "robust": {
++          "only_current_right": 4,
++          "only_variant_right": 1,
++          "mcnemar_p": 0.375
++        },
++        "robust+stretch": {
++          "only_current_right": 3,
++          "only_variant_right": 0,
++          "mcnemar_p": 0.25
++        }
++      }
++    },
++    {
++      "condition": "light_on_dark",
++      "description": "white stroke on black (drawing canvas)",
++      "current": {
++        "accuracy": 0.982,
++        "ci95": [
++          0.9717265156214581,
++          0.9885843541412616
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.982
++      },
++      "stretch": {
++        "accuracy": 0.982,
++        "ci95": [
++          0.9717265156214581,
++          0.9885843541412616
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.982
++      },
++      "robust": {
++        "accuracy": 0.981,
++        "ci95": [
++          0.9705153112972965,
++          0.9878032122625958
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.981
++      },
++      "robust+stretch": {
++        "accuracy": 0.981,
++        "ci95": [
++          0.9705153112972965,
++          0.9878032122625958
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.981
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 0,
++          "only_variant_right": 0,
++          "mcnemar_p": 1.0
++        },
++        "robust": {
++          "only_current_right": 2,
++          "only_variant_right": 1,
++          "mcnemar_p": 1.0
++        },
++        "robust+stretch": {
++          "only_current_right": 2,
++          "only_variant_right": 1,
++          "mcnemar_p": 1.0
++        }
++      }
++    },
++    {
++      "condition": "faint_ink",
++      "description": "pencil-like, 35% contrast",
++      "current": {
++        "accuracy": 0.972,
++        "ci95": [
++          0.9598295551975795,
++          0.9805578525368679
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.972
++      },
++      "stretch": {
++        "accuracy": 0.98,
++        "ci95": [
++          0.9693097584861028,
++          0.9870164188709625
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.98
++      },
++      "robust": {
++        "accuracy": 0.961,
++        "ci95": [
++          0.9471303986994359,
++          0.971341200803912
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.961
++      },
++      "robust+stretch": {
++        "accuracy": 0.982,
++        "ci95": [
++          0.9717265156214581,
++          0.9885843541412616
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.982
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 4,
++          "only_variant_right": 12,
++          "mcnemar_p": 0.076812744140625
++        },
++        "robust": {
++          "only_current_right": 16,
++          "only_variant_right": 5,
++          "mcnemar_p": 0.02660369873046875
++        },
++        "robust+stretch": {
++          "only_current_right": 2,
++          "only_variant_right": 12,
++          "mcnemar_p": 0.012939453125
++        }
++      }
++    },
++    {
++      "condition": "very_faint_ink",
++      "description": "20% contrast",
++      "current": {
++        "accuracy": 0.965,
++        "ci95": [
++          0.9517130967996695,
++          0.9747278875149873
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.965
++      },
++      "stretch": {
++        "accuracy": 0.981,
++        "ci95": [
++          0.9705153112972965,
++          0.9878032122625958
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.981
++      },
++      "robust": {
++        "accuracy": 0.891,
++        "ci95": [
++          0.8701670973953542,
++          0.9088402679100885
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.891
++      },
++      "robust+stretch": {
++        "accuracy": 0.982,
++        "ci95": [
++          0.9717265156214581,
++          0.9885843541412616
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.982
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 6,
++          "only_variant_right": 22,
++          "mcnemar_p": 0.0037191659212112427
++        },
++        "robust": {
++          "only_current_right": 76,
++          "only_variant_right": 2,
++          "mcnemar_p": 2.039496518310745e-20
++        },
++        "robust+stretch": {
++          "only_current_right": 6,
++          "only_variant_right": 23,
++          "mcnemar_p": 0.002315700054168701
++        }
++      }
++    },
++    {
++      "condition": "blur",
++      "description": "defocus blur, radius 3",
++      "current": {
++        "accuracy": 0.984,
++        "ci95": [
++          0.9741677180358003,
++          0.9901278441325737
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.984
++      },
++      "stretch": {
++        "accuracy": 0.984,
++        "ci95": [
++          0.9741677180358003,
++          0.9901278441325737
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.984
++      },
++      "robust": {
++        "accuracy": 0.98,
++        "ci95": [
++          0.9693097584861028,
++          0.9870164188709625
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.98
++      },
++      "robust+stretch": {
++        "accuracy": 0.983,
++        "ci95": [
++          0.9729438156287651,
++          0.9893594003367818
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.983
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 0,
++          "only_variant_right": 0,
++          "mcnemar_p": 1.0
++        },
++        "robust": {
++          "only_current_right": 4,
++          "only_variant_right": 0,
++          "mcnemar_p": 0.125
++        },
++        "robust+stretch": {
++          "only_current_right": 1,
++          "only_variant_right": 0,
++          "mcnemar_p": 1.0
++        }
++      }
++    },
++    {
++      "condition": "noise",
++      "description": "sensor noise, sigma 20",
++      "current": {
++        "accuracy": 0.809,
++        "ci95": [
++          0.7834715055777532,
++          0.8321634710958576
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.809
++      },
++      "stretch": {
++        "accuracy": 0.809,
++        "ci95": [
++          0.7834715055777532,
++          0.8321634710958576
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.809
++      },
++      "robust": {
++        "accuracy": 0.983,
++        "ci95": [
++          0.9729438156287651,
++          0.9893594003367818
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.983
++      },
++      "robust+stretch": {
++        "accuracy": 0.984,
++        "ci95": [
++          0.9741677180358003,
++          0.9901278441325737
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.984
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 0,
++          "only_variant_right": 0,
++          "mcnemar_p": 1.0
++        },
++        "robust": {
++          "only_current_right": 3,
++          "only_variant_right": 177,
++          "mcnemar_p": 1.2687162527738467e-48
++        },
++        "robust+stretch": {
++          "only_current_right": 3,
++          "only_variant_right": 178,
++          "mcnemar_p": 6.4498849989573976e-49
++        }
++      }
++    },
++    {
++      "condition": "rotated",
++      "description": "rotated up to +/-15 degrees",
++      "current": {
++        "accuracy": 0.98,
++        "ci95": [
++          0.9693097584861028,
++          0.9870164188709625
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.98
++      },
++      "stretch": {
++        "accuracy": 0.98,
++        "ci95": [
++          0.9693097584861028,
++          0.9870164188709625
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.98
++      },
++      "robust": {
++        "accuracy": 0.98,
++        "ci95": [
++          0.9693097584861028,
++          0.9870164188709625
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.98
++      },
++      "robust+stretch": {
++        "accuracy": 0.979,
++        "ci95": [
++          0.9681094652438844,
++          0.9862243659103536
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.979
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 0,
++          "only_variant_right": 0,
++          "mcnemar_p": 1.0
++        },
++        "robust": {
++          "only_current_right": 3,
++          "only_variant_right": 3,
++          "mcnemar_p": 1.0
++        },
++        "robust+stretch": {
++          "only_current_right": 2,
++          "only_variant_right": 1,
++          "mcnemar_p": 1.0
++        }
++      }
++    },
++    {
++      "condition": "shadow",
++      "description": "uneven lighting, 50% gradient",
++      "current": {
++        "accuracy": 0.759,
++        "ci95": [
++          0.7315325254793826,
++          0.7844851410528672
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.759
++      },
++      "stretch": {
++        "accuracy": 0.758,
++        "ci95": [
++          0.7304991577735996,
++          0.7835261625558229
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.758
++      },
++      "robust": {
++        "accuracy": 0.926,
++        "ci95": [
++          0.908094233760596,
++          0.9406452486437995
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.926
++      },
++      "robust+stretch": {
++        "accuracy": 0.928,
++        "ci95": [
++          0.9102878591617453,
++          0.9424363156483045
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.928
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 2,
++          "only_variant_right": 1,
++          "mcnemar_p": 1.0
++        },
++        "robust": {
++          "only_current_right": 12,
++          "only_variant_right": 179,
++          "mcnemar_p": 2.3602514026732167e-39
++        },
++        "robust+stretch": {
++          "only_current_right": 11,
++          "only_variant_right": 180,
++          "mcnemar_p": 1.563704003595618e-40
++        }
++      }
++    },
++    {
++      "condition": "small_digit",
++      "description": "digit only 40-70 px on a 400 px frame",
++      "current": {
++        "accuracy": 0.952,
++        "ci95": [
++          0.9369335997915913,
++          0.9636068838863117
++        ],
++        "rejected": 33,
++        "accuracy_on_accepted": 0.984488107549121
++      },
++      "stretch": {
++        "accuracy": 0.952,
++        "ci95": [
++          0.9369335997915913,
++          0.9636068838863117
++        ],
++        "rejected": 33,
++        "accuracy_on_accepted": 0.984488107549121
++      },
++      "robust": {
++        "accuracy": 0.98,
++        "ci95": [
++          0.9693097584861028,
++          0.9870164188709625
++        ],
++        "rejected": 1,
++        "accuracy_on_accepted": 0.980980980980981
++      },
++      "robust+stretch": {
++        "accuracy": 0.979,
++        "ci95": [
++          0.9681094652438844,
++          0.9862243659103536
++        ],
++        "rejected": 1,
++        "accuracy_on_accepted": 0.97997997997998
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 0,
++          "only_variant_right": 0,
++          "mcnemar_p": 1.0
++        },
++        "robust": {
++          "only_current_right": 6,
++          "only_variant_right": 34,
++          "mcnemar_p": 8.364584573428147e-06
++        },
++        "robust+stretch": {
++          "only_current_right": 7,
++          "only_variant_right": 34,
++          "mcnemar_p": 2.532080361561384e-05
++        }
++      }
++    },
++    {
++      "condition": "thick_marker",
++      "description": "thick strokes",
++      "current": {
++        "accuracy": 0.968,
++        "ci95": [
++          0.9551749890510055,
++          0.977243033872133
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.968
++      },
++      "stretch": {
++        "accuracy": 0.965,
++        "ci95": [
++          0.9517130967996695,
++          0.9747278875149873
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.965
++      },
++      "robust": {
++        "accuracy": 0.971,
++        "ci95": [
++          0.958661377168108,
++          0.9797336843635122
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.971
++      },
++      "robust+stretch": {
++        "accuracy": 0.967,
++        "ci95": [
++          0.9540184599711052,
++          0.9764072167492062
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.967
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 3,
++          "only_variant_right": 0,
++          "mcnemar_p": 0.25
++        },
++        "robust": {
++          "only_current_right": 1,
++          "only_variant_right": 4,
++          "mcnemar_p": 0.375
++        },
++        "robust+stretch": {
++          "only_current_right": 2,
++          "only_variant_right": 1,
++          "mcnemar_p": 1.0
++        }
++      }
++    },
++    {
++      "condition": "thin_pen",
++      "description": "thin strokes",
++      "current": {
++        "accuracy": 0.975,
++        "ci95": [
++          0.9633544581334902,
++          0.9830099882094389
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.975
++      },
++      "stretch": {
++        "accuracy": 0.98,
++        "ci95": [
++          0.9693097584861028,
++          0.9870164188709625
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.98
++      },
++      "robust": {
++        "accuracy": 0.968,
++        "ci95": [
++          0.9551749890510055,
++          0.977243033872133
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.968
++      },
++      "robust+stretch": {
++        "accuracy": 0.975,
++        "ci95": [
++          0.9633544581334902,
++          0.9830099882094389
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.975
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 1,
++          "only_variant_right": 6,
++          "mcnemar_p": 0.125
++        },
++        "robust": {
++          "only_current_right": 9,
++          "only_variant_right": 2,
++          "mcnemar_p": 0.0654296875
++        },
++        "robust+stretch": {
++          "only_current_right": 4,
++          "only_variant_right": 4,
++          "mcnemar_p": 1.0
++        }
++      }
++    },
++    {
++      "condition": "jpeg_q30",
++      "description": "heavy JPEG compression, quality 30",
++      "current": {
++        "accuracy": 0.983,
++        "ci95": [
++          0.9729438156287651,
++          0.9893594003367818
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.983
++      },
++      "stretch": {
++        "accuracy": 0.982,
++        "ci95": [
++          0.9717265156214581,
++          0.9885843541412616
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.982
++      },
++      "robust": {
++        "accuracy": 0.985,
++        "ci95": [
++          0.9753988052083976,
++          0.9908891031628037
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.985
++      },
++      "robust+stretch": {
++        "accuracy": 0.984,
++        "ci95": [
++          0.9741677180358003,
++          0.9901278441325737
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.984
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 1,
++          "only_variant_right": 0,
++          "mcnemar_p": 1.0
++        },
++        "robust": {
++          "only_current_right": 1,
++          "only_variant_right": 3,
++          "mcnemar_p": 0.625
++        },
++        "robust+stretch": {
++          "only_current_right": 1,
++          "only_variant_right": 2,
++          "mcnemar_p": 1.0
++        }
++      }
++    },
++    {
++      "condition": "combined_hard",
++      "description": "faint+blur+noise+shadow+rotation",
++      "current": {
++        "accuracy": 0.138,
++        "ci95": [
++          0.11800423096411534,
++          0.16076644361243145
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.138
++      },
++      "stretch": {
++        "accuracy": 0.14,
++        "ci95": [
++          0.11986822971832733,
++          0.16288713726387388
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.14
++      },
++      "robust": {
++        "accuracy": 0.97,
++        "ci95": [
++          0.95749631851849,
++          0.978906396810303
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.97
++      },
++      "robust+stretch": {
++        "accuracy": 0.979,
++        "ci95": [
++          0.9681094652438844,
++          0.9862243659103536
++        ],
++        "rejected": 0,
++        "accuracy_on_accepted": 0.979
++      },
++      "paired_vs_current": {
++        "stretch": {
++          "only_current_right": 10,
++          "only_variant_right": 12,
++          "mcnemar_p": 0.8318119049072266
++        },
++        "robust": {
++          "only_current_right": 0,
++          "only_variant_right": 832,
++          "mcnemar_p": 6.983507489299546e-251
++        },
++        "robust+stretch": {
++          "only_current_right": 0,
++          "only_variant_right": 841,
++          "mcnemar_p": 1.3639663065038175e-253
++        }
++      }
++    }
++  ]
++}
+\ No newline at end of file
+diff --git a/main.py b/main.py
+index 99af09e..d2daf8f 100644
+--- a/main.py
++++ b/main.py
+@@ -15,10 +15,10 @@ import time as _time
+ import uuid
+ from contextlib import asynccontextmanager
+ from dataclasses import dataclass, field
+-from io import BytesIO
+ from pathlib import Path
+ from threading import Lock
+ from typing import Annotated, Any, AsyncIterator
++from urllib.parse import urlparse
+ 
+ import numpy as np
+ from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+@@ -26,9 +26,11 @@ from fastapi.concurrency import run_in_threadpool
+ from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.responses import FileResponse, RedirectResponse, Response
+ from fastapi.staticfiles import StaticFiles
++from PIL import Image
+ from pydantic import BaseModel, Field
+ from pydantic_settings import BaseSettings, SettingsConfigDict
+-from PIL import Image, ImageOps, UnidentifiedImageError
++
++from digitreader.preprocessing import PreprocessError, prepare_tensor
+ 
+ logger = logging.getLogger("digit2text")
+ 
+@@ -55,6 +57,10 @@ class Settings(BaseSettings):
+     max_image_pixels: int = 20_000_000
+     # Minimum share of the image that must be ink, otherwise we treat it as blank.
+     min_ink_ratio: float = 0.001
++    # Background flattening + noise smoothing + contrast stretch before locating the digit.
++    # Measured in eval/results/pipeline_eval_variants.json. Set D2T_ROBUST_PREPROCESSING=false
++    # to restore the original pipeline without redeploying code.
++    robust_preprocessing: bool = True
+     low_confidence_threshold: float = 0.70
+     # Written by visualize.py: training curves, evaluation, sample digits.
+     viz_data_path: Path = APP_DIR / "exported_model" / "viz_data.json"
+@@ -139,7 +145,7 @@ class DigitClassifier:
+             layers = self.layers()
+             if self._extractor is None:
+                 try:
+-                    self._extractor = _keras().Model(self.model.inputs, [layer.output for layer in layers])
++                    self._extractor = _keras().Model(self.model.input, [layer.output for layer in layers])
+                 except Exception:  # noqa: BLE001 - fall back to a plain layer-by-layer pass
+                     self._extractor = False
+             if self._extractor:
+@@ -154,99 +160,19 @@ class DigitClassifier:
+ 
+ 
+ # --------------------------------------------------------------------------- #
+-# Preprocessing
++# Preprocessing lives in digitreader/preprocessing.py (pure, unit-tested).
+ # --------------------------------------------------------------------------- #
+-def _image_error(status: int, detail: str) -> HTTPException:
+-    return HTTPException(status_code=status, detail=detail)
+-
+-
+-def _otsu_threshold(gray: np.ndarray) -> int:
+-    histogram = np.bincount(gray.ravel(), minlength=256).astype(np.float64)
+-    probabilities = histogram / gray.size
+-    weight_bg = np.cumsum(probabilities)
+-    cumulative_mean = np.cumsum(probabilities * np.arange(256))
+-    denominator = weight_bg * (1.0 - weight_bg)
+-    variance = np.zeros(256)
+-    valid = denominator > 0
+-    variance[valid] = (
+-        (cumulative_mean[-1] * weight_bg[valid] - cumulative_mean[valid]) ** 2
+-        / denominator[valid]
+-    )
+-    return int(np.argmax(variance))
+-
+-
+-def _decode_image(contents: bytes) -> np.ndarray:
+-    """Bytes -> upright grayscale uint8 array (transparency flattened onto white)."""
+-    try:
+-        with Image.open(BytesIO(contents)) as source:
+-            if source.width * source.height > settings.max_image_pixels:
+-                raise _image_error(413, "Image is too large. Use an image under 20 megapixels.")
+-            oriented = ImageOps.exif_transpose(source).convert("RGBA")
+-    except HTTPException:
+-        raise
+-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+-        raise _image_error(415, "The upload is not a supported or readable image.") from exc
+-
+-    background = Image.new("RGBA", oriented.size, (255, 255, 255, 255))
+-    return np.asarray(Image.alpha_composite(background, oriented).convert("L"), dtype=np.uint8)
+-
+-
+-def _to_light_on_dark(gray: np.ndarray) -> np.ndarray:
+-    """MNIST is bright strokes on a dark background; invert dark-on-light photos."""
+-    border = np.concatenate((gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]))
+-    return 255 - gray if float(np.median(border)) >= 127 else gray
+-
+-
+-def _column_runs(mask: np.ndarray) -> list[tuple[int, int]]:
+-    """Horizontal runs of columns containing foreground, split by empty columns."""
+-    occupied = np.concatenate(([0], mask.any(axis=0).astype(np.int8), [0]))
+-    edges = np.diff(occupied)
+-    return list(zip(np.flatnonzero(edges == 1).tolist(), np.flatnonzero(edges == -1).tolist()))
+-
+-
+-def _center_on_canvas(glyph: np.ndarray) -> np.ndarray:
+-    """Fit into 20x20, place on 28x28, then center by center of mass (MNIST style)."""
+-    height, width = glyph.shape
+-    scale = 20.0 / max(height, width)
+-    resized = Image.fromarray(glyph).resize(
+-        (max(1, round(width * scale)), max(1, round(height * scale))),
+-        Image.Resampling.LANCZOS,
+-    )
+-    canvas = np.zeros((28, 28), dtype=np.float32)
+-    top, left = (28 - resized.height) // 2, (28 - resized.width) // 2
+-    canvas[top : top + resized.height, left : left + resized.width] = np.asarray(
+-        resized, dtype=np.float32
+-    )
+-
+-    total = canvas.sum()
+-    if total > 0:
+-        ys, xs = np.indices(canvas.shape)
+-        shift_y = int(round(13.5 - (ys * canvas).sum() / total))
+-        shift_x = int(round(13.5 - (xs * canvas).sum() / total))
+-        canvas = np.roll(canvas, (shift_y, shift_x), axis=(0, 1))
+-    return canvas / 255.0
+-
+-
+ def _prepare_tensor(contents: bytes) -> np.ndarray:
+-    gray = _to_light_on_dark(_decode_image(contents))
+-    foreground = gray > _otsu_threshold(gray)
+-
+-    runs = _column_runs(foreground)
+-    if not runs:
+-        raise _image_error(422, "No handwritten digit was found. Try a clearer, higher-contrast photo.")
+-
+-    # Camera shots often contain stray specks/shadows: keep only the run with the most ink.
+-    left, right = max(runs, key=lambda r: int(foreground[:, r[0] : r[1]].sum()))
+-    rows = np.flatnonzero(foreground[:, left:right].any(axis=1))
+-    top, bottom = int(rows[0]), int(rows[-1]) + 1
+-    mask = foreground[top:bottom, left:right]
+-
+-    if mask.sum() < foreground.size * settings.min_ink_ratio:
+-        raise _image_error(422, "The digit is too small or faint. Move closer and try again.")
+-
+-    # Keep original stroke intensity for smoother, MNIST-like edges.
+-    glyph = np.where(mask, gray[top:bottom, left:right], 0).astype(np.uint8)
+-    return _center_on_canvas(glyph).reshape(1, 28, 28, 1)
++    try:
++        return prepare_tensor(
++            contents,
++            max_pixels=settings.max_image_pixels,
++            min_ink_ratio=settings.min_ink_ratio,
++            robust=settings.robust_preprocessing,
++            stretch_contrast=settings.robust_preprocessing,
++        )
++    except PreprocessError as exc:
++        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+ 
+ 
+ # --------------------------------------------------------------------------- #
+@@ -288,6 +214,24 @@ async def _read_limited(file: UploadFile) -> bytes:
+     return contents
+ 
+ 
++def _max_b64_chars() -> int:
++    """Longest base64 string that can decode to an allowed upload (4 chars per 3 bytes, plus a data-URI prefix)."""
++    return (settings.max_upload_bytes * 4) // 3 + 1024
++
++
++def _websocket_origin_allowed(ws: WebSocket) -> bool:
++    """CORS middleware does not cover WebSockets, so check the Origin header ourselves.
++
++    Non-browser clients send no Origin and are allowed. Browsers must come from the same
++    host that serves this app or from a configured CORS origin.
++    """
++    origin = ws.headers.get("origin")
++    if not origin:
++        return True
++    allowed = {o.rstrip("/") for o in settings.cors_origins}
++    return origin.rstrip("/") in allowed or urlparse(origin).netloc == ws.headers.get("host", "")
++
++
+ # --------------------------------------------------------------------------- #
+ # Network visualizer: architecture + live layer-by-layer trace
+ # --------------------------------------------------------------------------- #
+@@ -589,6 +533,8 @@ async def trace(
+ async def convert_base64(request: Request, body: Base64Request) -> DigitResponse:
+     classifier = _get_classifier(request)
+     raw = body.image.strip()
++    if len(raw) > _max_b64_chars():
++        raise HTTPException(413, f"Image exceeds the {settings.max_upload_bytes // (1024 * 1024)} MB limit.")
+     # Strip the data-URI prefix if the client sent one (e.g. "data:image/png;base64,...")
+     if "," in raw and raw.index(",") < 120:
+         raw = raw.split(",", 1)[1]
+@@ -632,6 +578,9 @@ async def ws_draw(ws: WebSocket) -> None:
+     Send ``{"image": "<base64>"}`` and receive the full ``DigitResponse`` as
+     JSON.  The *image* value may be a raw base64 string or a data-URI.
+     """
++    if not _websocket_origin_allowed(ws):
++        await ws.close(code=1008)  # policy violation
++        return
+     await ws.accept()
+     classifier = getattr(ws.app.state, "classifier", None)
+     if classifier is None:
+@@ -640,6 +589,9 @@ async def ws_draw(ws: WebSocket) -> None:
+     try:
+         while True:
+             raw = await ws.receive_text()
++            if len(raw) > _max_b64_chars() + 64:  # +64 for the JSON envelope
++                await ws.send_json({"error": "Image is too large."})
++                continue
+             try:
+                 payload = json.loads(raw)
+                 image_data = payload.get("image", "")
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..004c599
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,11 @@
++[tool.ruff]
++line-length = 120
++target-version = "py310"
++extend-exclude = ["frontend", "*.ipynb"]
++
++[tool.ruff.lint]
++select = ["E", "F", "I"]
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++filterwarnings = ["ignore::DeprecationWarning"]
+diff --git a/requirements-dev.txt b/requirements-dev.txt
+new file mode 100644
+index 0000000..38b0acf
+--- /dev/null
++++ b/requirements-dev.txt
+@@ -0,0 +1,4 @@
++-r requirements.txt
++pytest>=8
++httpx>=0.27
++ruff>=0.6
+diff --git a/requirements.txt b/requirements.txt
+index d9a15cc..131e6cc 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -5,4 +5,5 @@ pydantic>=2.6
+ pydantic-settings>=2.2
+ numpy>=1.26
+ pillow>=10.2
+-tensorflow>=2.15
++# The model was saved with Keras 3 (needs TensorFlow >= 2.16). Tested with TensorFlow 2.21.0.
++tensorflow>=2.16,<3
+diff --git a/tests/conftest.py b/tests/conftest.py
+new file mode 100644
+index 0000000..0bb7e94
+--- /dev/null
++++ b/tests/conftest.py
+@@ -0,0 +1,49 @@
++import base64
++import io
++import json
++import os
++from pathlib import Path
++
++import numpy as np
++import pytest
++from PIL import Image
++
++os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
++ROOT = Path(__file__).resolve().parents[1]
++
++
++@pytest.fixture(scope="session")
++def mnist_samples() -> list[tuple[int, np.ndarray]]:
++    """Ten real MNIST test digits (28x28 uint8) shipped in exported_model/viz_data.json."""
++    data = json.loads((ROOT / "exported_model" / "viz_data.json").read_text(encoding="utf-8"))
++    return [
++        (item["digit"], np.frombuffer(base64.b64decode(item["image"]), dtype=np.uint8).reshape(28, 28))
++        for item in data["gallery"]
++    ]
++
++
++def render_photo(glyph28: np.ndarray, *, size: int = 280, dark_on_light: bool = True, pad: int = 60) -> bytes:
++    """Upscale an MNIST digit and render it like a clean phone photo of ink on paper (PNG bytes)."""
++    big = np.asarray(Image.fromarray(glyph28).resize((size, size), Image.Resampling.BICUBIC))
++    canvas = np.zeros((size + 2 * pad, size + 2 * pad), dtype=np.uint8)
++    canvas[pad : pad + size, pad : pad + size] = big
++    if dark_on_light:
++        canvas = 255 - canvas
++    buffer = io.BytesIO()
++    Image.fromarray(canvas).save(buffer, format="PNG")
++    return buffer.getvalue()
++
++
++@pytest.fixture(scope="session")
++def photo():
++    return render_photo
++
++
++@pytest.fixture(scope="session")
++def client():
++    from fastapi.testclient import TestClient
++
++    import main
++
++    with TestClient(main.app) as test_client:  # runs lifespan: loads the real model once
++        yield test_client
+diff --git a/tests/test_api.py b/tests/test_api.py
+new file mode 100644
+index 0000000..50b7236
+--- /dev/null
++++ b/tests/test_api.py
+@@ -0,0 +1,101 @@
++import base64
++
++import pytest
++from starlette.websockets import WebSocketDisconnect
++
++
++def test_health_and_ready(client):
++    assert client.get("/health").json() == {"status": "ok"}
++    assert client.get("/ready").json() == {"status": "ready"}
++
++
++def test_every_real_mnist_digit_is_read_correctly(client, mnist_samples, photo):
++    """End to end: HTTP upload -> preprocessing -> real CNN, on one real digit per class."""
++    for digit, glyph in mnist_samples:
++        response = client.post("/v1/convert", files={"file": ("d.png", photo(glyph), "image/png")})
++        assert response.status_code == 200, response.text
++        body = response.json()
++        assert body["digit"] == digit
++        assert body["text"] == str(digit)
++        assert body["confidence"] > 0.9
++        assert len(body["top_predictions"]) == 3
++
++
++@pytest.mark.parametrize(
++    ("files", "status"),
++    [
++        ({"file": ("e.png", b"", "image/png")}, 400),
++        ({"file": ("t.txt", b"hello", "text/plain")}, 415),
++    ],
++)
++def test_bad_uploads(client, files, status):
++    assert client.post("/v1/convert", files=files).status_code == status
++
++
++def test_blank_image_returns_422(client):
++    import io
++
++    import numpy as np
++    from PIL import Image
++
++    buffer = io.BytesIO()
++    Image.fromarray(np.full((64, 64), 255, np.uint8)).save(buffer, format="PNG")
++    response = client.post("/v1/convert", files={"file": ("b.png", buffer.getvalue(), "image/png")})
++    assert response.status_code == 422
++
++
++def test_base64_endpoint_matches_multipart(client, mnist_samples, photo):
++    digit, glyph = mnist_samples[7]
++    payload = base64.b64encode(photo(glyph)).decode()
++    response = client.post("/v1/convert-base64", json={"image": f"data:image/png;base64,{payload}"})
++    assert response.status_code == 200 and response.json()["digit"] == digit
++
++
++def test_base64_oversize_is_rejected_before_decoding(client, monkeypatch):
++    import main
++
++    monkeypatch.setattr(main.settings, "max_upload_bytes", 1000)
++    assert client.post("/v1/convert-base64", json={"image": "A" * 5000}).status_code == 413
++
++
++def test_model_description_matches_training_summary(client):
++    import json
++
++    from conftest import ROOT
++
++    summary = json.loads((ROOT / "exported_model" / "training_summary.json").read_text(encoding="utf-8"))
++    info = client.get("/v1/model").json()
++    assert info["total_params"] == summary["total_parameters"]
++    assert info["input_shape"] == [28, 28, 1]
++    assert [layer["type"] for layer in info["layers"]][-1] == "Dense"
++
++
++def test_trace_agrees_with_convert(client, mnist_samples, photo):
++    digit, glyph = mnist_samples[2]
++    files = {"file": ("d.png", photo(glyph), "image/png")}
++    trace = client.post("/v1/trace", files=files).json()
++    assert trace["prediction"] == digit
++    assert abs(sum(trace["probabilities"]) - 1.0) < 1e-4
++    assert len(trace["layers"]) == len(client.get("/v1/model").json()["layers"])
++
++
++def test_websocket_same_origin_and_no_origin_allowed(client, mnist_samples, photo):
++    digit, glyph = mnist_samples[5]
++    message = {"image": base64.b64encode(photo(glyph)).decode()}
++    with client.websocket_connect("/ws/draw") as ws:
++        ws.send_json(message)
++        assert ws.receive_json()["digit"] == digit
++
++
++def test_websocket_foreign_origin_is_rejected(client):
++    with pytest.raises(WebSocketDisconnect), client.websocket_connect("/ws/draw", headers={"origin": "https://evil.example"}):
++        pass
++
++
++def test_websocket_oversize_message_is_refused(client, monkeypatch):
++    import main
++
++    monkeypatch.setattr(main.settings, "max_upload_bytes", 1000)
++    with client.websocket_connect("/ws/draw") as ws:
++        ws.send_json({"image": "A" * 6000})
++        assert "too large" in ws.receive_json()["error"].lower()
+diff --git a/tests/test_preprocessing.py b/tests/test_preprocessing.py
+new file mode 100644
+index 0000000..8cb765b
+--- /dev/null
++++ b/tests/test_preprocessing.py
+@@ -0,0 +1,107 @@
++import io
++
++import numpy as np
++import pytest
++from PIL import Image
++
++from digitreader.preprocessing import (
++    PreprocessError,
++    otsu_threshold,
++    prepare_from_gray,
++    prepare_tensor,
++)
++
++
++@pytest.mark.parametrize("robust", [False, True])
++def test_tensor_contract(mnist_samples, photo, robust):
++    """The model contract in exported_model/preprocessing_config.json."""
++    for _, glyph in mnist_samples:
++        tensor = prepare_tensor(photo(glyph), robust=robust)
++        assert tensor.shape == (1, 28, 28, 1)
++        assert tensor.dtype == np.float32
++        assert 0.0 <= tensor.min() and tensor.max() <= 1.0
++
++
++@pytest.mark.parametrize("robust", [False, True])
++def test_polarity_is_normalised(mnist_samples, photo, robust):
++    """Dark-on-light and light-on-dark renderings of one digit give the identical tensor."""
++    _, glyph = mnist_samples[3]
++    a = prepare_tensor(photo(glyph, dark_on_light=True), robust=robust)
++    b = prepare_tensor(photo(glyph, dark_on_light=False), robust=robust)
++    assert np.array_equal(a, b)
++
++
++@pytest.mark.parametrize("robust", [False, True])
++@pytest.mark.parametrize("size", [120, 280, 600])
++def test_digit_is_centred_by_centre_of_mass(mnist_samples, photo, size, robust):
++    for _, glyph in mnist_samples:
++        image = prepare_tensor(photo(glyph, size=size), robust=robust)[0, :, :, 0]
++        ys, xs = np.indices(image.shape)
++        cy, cx = (ys * image).sum() / image.sum(), (xs * image).sum() / image.sum()
++        assert abs(cy - 13.5) < 0.8 and abs(cx - 13.5) < 0.8
++
++
++def test_digit_fits_20px_box(mnist_samples, photo):
++    for _, glyph in mnist_samples:
++        image = prepare_tensor(photo(glyph))[0, :, :, 0] > 0.05
++        rows, cols = np.flatnonzero(image.any(axis=1)), np.flatnonzero(image.any(axis=0))
++        assert np.ptp(rows) + 1 <= 24 and np.ptp(cols) + 1 <= 24  # 20px box + resampling/roll slack
++
++
++def test_stretch_contrast_is_opt_in(mnist_samples):
++    """Default keeps raw stroke intensity; the flag rescales the stroke peak to 1.0."""
++    _, glyph = mnist_samples[0]
++    faint = (glyph.astype(np.float32) * 0.4).astype(np.uint8)  # light-on-dark, peak ~100
++    default = prepare_from_gray(faint)
++    stretched = prepare_from_gray(faint, stretch_contrast=True)
++    assert default.max() < 0.6
++    assert stretched.max() > 0.9
++
++
++def test_otsu_separates_bimodal_image():
++    gray = np.concatenate([np.full(500, 20, np.uint8), np.full(500, 220, np.uint8)])
++    assert 20 <= otsu_threshold(gray) < 220
++
++
++def _png(array: np.ndarray) -> bytes:
++    buffer = io.BytesIO()
++    Image.fromarray(array).save(buffer, format="PNG")
++    return buffer.getvalue()
++
++
++@pytest.mark.parametrize("robust", [False, True])
++def test_blank_image_is_rejected(robust):
++    with pytest.raises(PreprocessError) as info:
++        prepare_tensor(_png(np.full((64, 64), 255, np.uint8)), robust=robust)
++    assert info.value.status_code == 422
++
++
++@pytest.mark.parametrize("payload", [b"", b"definitely not an image"])
++def test_unreadable_bytes_are_rejected(payload):
++    with pytest.raises(PreprocessError) as info:
++        prepare_tensor(payload)
++    assert info.value.status_code == 415
++
++
++def test_pixel_limit_is_enforced():
++    with pytest.raises(PreprocessError) as info:
++        prepare_tensor(_png(np.zeros((100, 100), np.uint8)), max_pixels=50)
++    assert info.value.status_code == 413
++
++
++def _degrade(png_bytes: bytes, seed: int) -> bytes:
++    """Photo with uneven lighting plus sensor noise: the two failure modes found by eval/pipeline_eval.py."""
++    gray = np.asarray(Image.open(io.BytesIO(png_bytes)).convert("L"), dtype=np.float32)
++    ys, xs = np.mgrid[0 : gray.shape[0], 0 : gray.shape[1]] / gray.shape[0]
++    gray = gray * (1.0 - 0.4 * (xs + ys) / 2) + np.random.default_rng(seed).normal(0, 18, gray.shape)
++    return _png(np.clip(gray, 0, 255).astype(np.uint8))
++
++
++def test_robust_mode_survives_shadow_and_noise(client, mnist_samples, photo):
++    """Regression guard for the pipeline fix. Fixed seeds; >= 9/10 allows for numeric drift across libs."""
++    correct = 0
++    for index, (digit, glyph) in enumerate(mnist_samples):
++        data = _degrade(photo(glyph), seed=index)
++        tensor = prepare_tensor(data, robust=True, stretch_contrast=True)
++        correct += int(client.app.state.classifier.model.predict(tensor, verbose=0).argmax() == digit)
++    assert correct >= 9
+diff --git a/visualize.py b/visualize.py
+index 32dc381..750f773 100644
+--- a/visualize.py
++++ b/visualize.py
+@@ -148,7 +148,13 @@ def evaluate(model: Any, x_test: np.ndarray, y_test: np.ndarray, seed: int) -> t
+     wrong = np.flatnonzero(pred != y)
+     wrong = wrong[np.argsort(-conf[wrong])][:12]  # the most confidently wrong first
+     misclassified = [
+-        {"index": int(i), "true": int(y[i]), "pred": int(pred[i]), "confidence": float(conf[i]), "image": _b64(x_test[i])}
++        {
++            "index": int(i),
++            "true": int(y[i]),
++            "pred": int(pred[i]),
++            "confidence": float(conf[i]),
++            "image": _b64(x_test[i]),
++        }
+         for i in wrong
+     ]
+ 
+-- 
+2.43.0
+
