@@ -1,15 +1,6 @@
 <div align="center">
 
-<<<<<<< HEAD
 <img src="assets/banner.svg" alt="Digit Reader: handwritten digit to text" width="100%">
-=======
-
-https://digit-reader-using-cnn.onrender.com
-A FastAPI app that accepts a photo of one handwritten digit, preprocesses it for
-the included MNIST CNN, and returns the predicted digit with class probabilities.
-The browser page supports both taking a camera photo and choosing an image from
-the gallery.
->>>>>>> ae464cafb0da870ddbf81c22820c27dd3ea44221
 
 <br>
 
@@ -202,6 +193,7 @@ Settings can be overridden with environment variables prefixed `D2T_`:
 | `D2T_MAX_UPLOAD_BYTES` | `10485760` | Maximum upload size |
 | `D2T_MAX_IMAGE_PIXELS` | `20000000` | Maximum image size in pixels |
 | `D2T_LOW_CONFIDENCE_THRESHOLD` | `0.70` | Below this, a warning is returned |
+| `D2T_ROBUST_PREPROCESSING` | `true` | Flatten uneven lighting, smooth noise and stretch contrast before locating the digit. Set `false` to restore the original pipeline (see [Pipeline accuracy](#pipeline-accuracy)) |
 
 ## Deploy on Render
 
@@ -211,6 +203,64 @@ Settings can be overridden with environment variables prefixed `D2T_`:
 4. Deploy. Render gives you a public HTTPS URL, which also satisfies the browser's camera requirement.
 
 Because the frontend is served by the same app, it automatically calls the API on its own origin.
+
+> **React app (`/react`).** `frontend/dist` is git-ignored, so `/react` only works if the build step runs
+> (`cd frontend && npm ci && npm run build`). The command above installs Python dependencies only, so on a plain
+> Python build `/react` returns 404 while `/` and `/visualize` still work. Add the frontend build to your build
+> command if your build image provides Node.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+ruff check .          # lint
+pytest -q             # unit + API tests (loads the real model; about 10 s)
+```
+
+CI (`.github/workflows/ci.yml`) runs the same checks plus the frontend build on every push and pull request.
+Image preprocessing lives in `digitreader/preprocessing.py`, a pure module with no web-framework imports.
+
+## Pipeline accuracy
+
+The 98.96% in `exported_model/training_summary.json` is accuracy on clean 28x28 MNIST. Real uploads are photos, so
+`eval/pipeline_eval.py` renders MNIST **test** digits as simulated photos under 13 conditions, runs them through the real
+preprocessing and model, and compares pipeline variants on identical images (paired, with exact McNemar tests).
+
+```bash
+python eval/pipeline_eval.py --mnist-npz path/to/mnist_test.npz --n 1000
+```
+
+Results (1000 images per condition; raw data in `eval/results/pipeline_eval_variants.json`):
+
+| Condition | Original pipeline | New default (`robust` + stretch) | Change |
+|---|---|---|---|
+| clean photo | 98.4% | 98.1% | no significant change |
+| light on dark | 98.2% | 98.1% | no significant change |
+| faint ink | 97.2% | 98.2% | no significant change |
+| very faint ink | 96.5% | 98.2% | significant gain |
+| blur | 98.4% | 98.3% | no significant change |
+| noise | 80.9% | 98.4% | significant gain |
+| rotated | 98.0% | 97.9% | no significant change |
+| shadow | 75.9% | 92.8% | significant gain |
+| small digit | 95.2% | 97.9% | significant gain |
+| thick marker | 96.8% | 96.7% | no significant change |
+| thin pen | 97.5% | 97.5% | no significant change |
+| jpeg q30 | 98.3% | 98.4% | no significant change |
+| combined hard | 13.8% | 97.9% | significant gain |
+
+"Significant" means an exact McNemar p < 0.01, unadjusted for the 13 comparisons. Faint ink (p = 0.013) improves by a
+similar amount but falls just outside that cut-off.
+
+The original pipeline located the digit from per-column foreground occupancy under a single global Otsu threshold, so
+sensor noise and lighting gradients broke it. The new default flattens the page background, smooths noise *only for
+segmentation*, and stretches stroke contrast; the pixels that reach the model still come from the original image and
+the final tensor is unchanged in form (28x28, 0-1, white on black, 20 px box, centred by centre of mass).
+
+**Read this as a relative comparison, not a field accuracy guarantee.** The photos are simulated, the digits are MNIST
+test digits, there is one random seed, and with 1000 images per condition each 95% interval is about +/-1 point near 98% accuracy and up to
++/-2.7 points near 76%. On clean photos the new default flipped 3 images the wrong way and none the right way (p = 0.25, not
+distinguishable from chance), so a cost of up to about 0.3 points there cannot be ruled out. Real phone photos should be
+evaluated before quoting a field number.
 
 ## Tips for the best results
 
@@ -230,6 +280,7 @@ Because the frontend is served by the same app, it automatically calls the API o
 - [ ] Letter and symbol recognition (EMNIST)
 - [ ] Test-time augmentation for tougher photos
 - [ ] Dockerfile for one-command deployment
+- [ ] Evaluate the pipeline on real phone photos (the current harness is simulated)
 
 ## Documentation
 
