@@ -148,7 +148,13 @@ def evaluate(model: Any, x_test: np.ndarray, y_test: np.ndarray, seed: int) -> t
     wrong = np.flatnonzero(pred != y)
     wrong = wrong[np.argsort(-conf[wrong])][:12]  # the most confidently wrong first
     misclassified = [
-        {"index": int(i), "true": int(y[i]), "pred": int(pred[i]), "confidence": float(conf[i]), "image": _b64(x_test[i])}
+        {
+            "index": int(i),
+            "true": int(y[i]),
+            "pred": int(pred[i]),
+            "confidence": float(conf[i]),
+            "image": _b64(x_test[i]),
+        }
         for i in wrong
     ]
 

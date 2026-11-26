@@ -15,10 +15,10 @@ import time as _time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from io import BytesIO
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any, AsyncIterator
+from urllib.parse import urlparse
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -26,9 +26,11 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from PIL import Image, ImageOps, UnidentifiedImageError
+
+from digitreader.preprocessing import PreprocessError, prepare_tensor
 
 logger = logging.getLogger("digit2text")
 
@@ -55,6 +57,10 @@ class Settings(BaseSettings):
     max_image_pixels: int = 20_000_000
     # Minimum share of the image that must be ink, otherwise we treat it as blank.
     min_ink_ratio: float = 0.001
+    # Background flattening + noise smoothing + contrast stretch before locating the digit.
+    # Measured in eval/results/pipeline_eval_variants.json. Set D2T_ROBUST_PREPROCESSING=false
+    # to restore the original pipeline without redeploying code.
+    robust_preprocessing: bool = True
     low_confidence_threshold: float = 0.70
     # Written by visualize.py: training curves, evaluation, sample digits.
     viz_data_path: Path = APP_DIR / "exported_model" / "viz_data.json"
@@ -139,7 +145,7 @@ class DigitClassifier:
             layers = self.layers()
             if self._extractor is None:
                 try:
-                    self._extractor = _keras().Model(self.model.inputs, [layer.output for layer in layers])
+                    self._extractor = _keras().Model(self.model.input, [layer.output for layer in layers])
                 except Exception:  # noqa: BLE001 - fall back to a plain layer-by-layer pass
                     self._extractor = False
             if self._extractor:
@@ -154,99 +160,19 @@ class DigitClassifier:
 
 
 # --------------------------------------------------------------------------- #
-# Preprocessing
+# Preprocessing lives in digitreader/preprocessing.py (pure, unit-tested).
 # --------------------------------------------------------------------------- #
-def _image_error(status: int, detail: str) -> HTTPException:
-    return HTTPException(status_code=status, detail=detail)
-
-
-def _otsu_threshold(gray: np.ndarray) -> int:
-    histogram = np.bincount(gray.ravel(), minlength=256).astype(np.float64)
-    probabilities = histogram / gray.size
-    weight_bg = np.cumsum(probabilities)
-    cumulative_mean = np.cumsum(probabilities * np.arange(256))
-    denominator = weight_bg * (1.0 - weight_bg)
-    variance = np.zeros(256)
-    valid = denominator > 0
-    variance[valid] = (
-        (cumulative_mean[-1] * weight_bg[valid] - cumulative_mean[valid]) ** 2
-        / denominator[valid]
-    )
-    return int(np.argmax(variance))
-
-
-def _decode_image(contents: bytes) -> np.ndarray:
-    """Bytes -> upright grayscale uint8 array (transparency flattened onto white)."""
-    try:
-        with Image.open(BytesIO(contents)) as source:
-            if source.width * source.height > settings.max_image_pixels:
-                raise _image_error(413, "Image is too large. Use an image under 20 megapixels.")
-            oriented = ImageOps.exif_transpose(source).convert("RGBA")
-    except HTTPException:
-        raise
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
-        raise _image_error(415, "The upload is not a supported or readable image.") from exc
-
-    background = Image.new("RGBA", oriented.size, (255, 255, 255, 255))
-    return np.asarray(Image.alpha_composite(background, oriented).convert("L"), dtype=np.uint8)
-
-
-def _to_light_on_dark(gray: np.ndarray) -> np.ndarray:
-    """MNIST is bright strokes on a dark background; invert dark-on-light photos."""
-    border = np.concatenate((gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]))
-    return 255 - gray if float(np.median(border)) >= 127 else gray
-
-
-def _column_runs(mask: np.ndarray) -> list[tuple[int, int]]:
-    """Horizontal runs of columns containing foreground, split by empty columns."""
-    occupied = np.concatenate(([0], mask.any(axis=0).astype(np.int8), [0]))
-    edges = np.diff(occupied)
-    return list(zip(np.flatnonzero(edges == 1).tolist(), np.flatnonzero(edges == -1).tolist()))
-
-
-def _center_on_canvas(glyph: np.ndarray) -> np.ndarray:
-    """Fit into 20x20, place on 28x28, then center by center of mass (MNIST style)."""
-    height, width = glyph.shape
-    scale = 20.0 / max(height, width)
-    resized = Image.fromarray(glyph).resize(
-        (max(1, round(width * scale)), max(1, round(height * scale))),
-        Image.Resampling.LANCZOS,
-    )
-    canvas = np.zeros((28, 28), dtype=np.float32)
-    top, left = (28 - resized.height) // 2, (28 - resized.width) // 2
-    canvas[top : top + resized.height, left : left + resized.width] = np.asarray(
-        resized, dtype=np.float32
-    )
-
-    total = canvas.sum()
-    if total > 0:
-        ys, xs = np.indices(canvas.shape)
-        shift_y = int(round(13.5 - (ys * canvas).sum() / total))
-        shift_x = int(round(13.5 - (xs * canvas).sum() / total))
-        canvas = np.roll(canvas, (shift_y, shift_x), axis=(0, 1))
-    return canvas / 255.0
-
-
 def _prepare_tensor(contents: bytes) -> np.ndarray:
-    gray = _to_light_on_dark(_decode_image(contents))
-    foreground = gray > _otsu_threshold(gray)
-
-    runs = _column_runs(foreground)
-    if not runs:
-        raise _image_error(422, "No handwritten digit was found. Try a clearer, higher-contrast photo.")
-
-    # Camera shots often contain stray specks/shadows: keep only the run with the most ink.
-    left, right = max(runs, key=lambda r: int(foreground[:, r[0] : r[1]].sum()))
-    rows = np.flatnonzero(foreground[:, left:right].any(axis=1))
-    top, bottom = int(rows[0]), int(rows[-1]) + 1
-    mask = foreground[top:bottom, left:right]
-
-    if mask.sum() < foreground.size * settings.min_ink_ratio:
-        raise _image_error(422, "The digit is too small or faint. Move closer and try again.")
-
-    # Keep original stroke intensity for smoother, MNIST-like edges.
-    glyph = np.where(mask, gray[top:bottom, left:right], 0).astype(np.uint8)
-    return _center_on_canvas(glyph).reshape(1, 28, 28, 1)
+    try:
+        return prepare_tensor(
+            contents,
+            max_pixels=settings.max_image_pixels,
+            min_ink_ratio=settings.min_ink_ratio,
+            robust=settings.robust_preprocessing,
+            stretch_contrast=settings.robust_preprocessing,
+        )
+    except PreprocessError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -286,6 +212,24 @@ async def _read_limited(file: UploadFile) -> bytes:
             413, f"Image is too large. Maximum upload size is {settings.max_upload_bytes // (1024 * 1024)} MB."
         )
     return contents
+
+
+def _max_b64_chars() -> int:
+    """Longest base64 string that can decode to an allowed upload (4 chars per 3 bytes, plus a data-URI prefix)."""
+    return (settings.max_upload_bytes * 4) // 3 + 1024
+
+
+def _websocket_origin_allowed(ws: WebSocket) -> bool:
+    """CORS middleware does not cover WebSockets, so check the Origin header ourselves.
+
+    Non-browser clients send no Origin and are allowed. Browsers must come from the same
+    host that serves this app or from a configured CORS origin.
+    """
+    origin = ws.headers.get("origin")
+    if not origin:
+        return True
+    allowed = {o.rstrip("/") for o in settings.cors_origins}
+    return origin.rstrip("/") in allowed or urlparse(origin).netloc == ws.headers.get("host", "")
 
 
 # --------------------------------------------------------------------------- #
@@ -589,6 +533,8 @@ async def trace(
 async def convert_base64(request: Request, body: Base64Request) -> DigitResponse:
     classifier = _get_classifier(request)
     raw = body.image.strip()
+    if len(raw) > _max_b64_chars():
+        raise HTTPException(413, f"Image exceeds the {settings.max_upload_bytes // (1024 * 1024)} MB limit.")
     # Strip the data-URI prefix if the client sent one (e.g. "data:image/png;base64,...")
     if "," in raw and raw.index(",") < 120:
         raw = raw.split(",", 1)[1]
@@ -632,6 +578,9 @@ async def ws_draw(ws: WebSocket) -> None:
     Send ``{"image": "<base64>"}`` and receive the full ``DigitResponse`` as
     JSON.  The *image* value may be a raw base64 string or a data-URI.
     """
+    if not _websocket_origin_allowed(ws):
+        await ws.close(code=1008)  # policy violation
+        return
     await ws.accept()
     classifier = getattr(ws.app.state, "classifier", None)
     if classifier is None:
@@ -640,6 +589,9 @@ async def ws_draw(ws: WebSocket) -> None:
     try:
         while True:
             raw = await ws.receive_text()
+            if len(raw) > _max_b64_chars() + 64:  # +64 for the JSON envelope
+                await ws.send_json({"error": "Image is too large."})
+                continue
             try:
                 payload = json.loads(raw)
                 image_data = payload.get("image", "")
